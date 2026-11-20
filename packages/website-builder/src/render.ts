@@ -198,7 +198,7 @@ document.querySelectorAll('form[data-submit="disabled"]').forEach((f)=>{
 export function renderSiteFiles(lead: LeadInput, c: SiteComposition): Record<string, string> {
   const files: Record<string, string> = {};
   const desc = `${lead.name} a ${lead.city || "Italia"} — sito generato localmente da Infinity X.`;
-  const homeSections = c.sections.map((s) => sectionHtml(s, lead, c)).join("\\n");
+  const homeSections = c.sections.map((s) => sectionHtml(s, lead, c)).join("\n");
   files["index.html"] = shell(c.layoutFamily, lead, c, homeSections, `${lead.name} | Home`, desc, "index.html");
 
   // Extra pages with subset of sections for IA diversity
@@ -222,12 +222,13 @@ export function renderSiteFiles(lead: LeadInput, c: SiteComposition): Record<str
     files[file] = shell(c.layoutFamily, lead, c, inner, `${lead.name} | ${page}`, desc, file);
   }
 
-  files["styles.css"] = `/* Tokens mirrored in page <style>; kept for export clarity */\\n${cssVars(c)}\\n`;
-  files["robots.txt"] = `User-agent: *\\nAllow: /\\nSitemap: /sitemap.xml\\n`;
+  files["styles.css"] = `/* Tokens mirrored in page <style>; kept for export clarity */\n${cssVars(c)}\n`;
+  files["robots.txt"] = `User-agent: *\nAllow: /\nSitemap: /sitemap.xml\n`;
   const urls = Object.keys(files).filter((f) => f.endsWith(".html"));
-  files["sitemap.xml"] = `<?xml version="1.0" encoding="UTF-8"?>\\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\\n` +
-    urls.map((u) => `  <url><loc>/${u}</loc></url>`).join("\\n") +
-    `\\n</urlset>\\n`;
+  files["sitemap.xml"] =
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    urls.map((u) => `  <url><loc>/${u}</loc></url>`).join("\n") +
+    `\n</urlset>\n`;
   return files;
 }
 
