@@ -1,0 +1,14 @@
+{
+  "id": "bold-local",
+  "displayFont": "\"Oswald\", Impact, sans-serif",
+  "bodyFont": "\"Roboto\", system-ui, sans-serif",
+  "colors": {
+    "bg": "#0b1220",
+    "ink": "#e5e7eb",
+    "primary": "#22d3ee",
+    "accent": "#f97316",
+    "muted": "#9ca3af"
+  },
+  "radius": "0px",
+  "density": "compact"
+}

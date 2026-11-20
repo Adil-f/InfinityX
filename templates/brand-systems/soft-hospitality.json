@@ -1,0 +1,14 @@
+{
+  "id": "soft-hospitality",
+  "displayFont": "\"Cormorant Garamond\", Georgia, serif",
+  "bodyFont": "\"Karla\", system-ui, sans-serif",
+  "colors": {
+    "bg": "#faf7f2",
+    "ink": "#3f2e2a",
+    "primary": "#9a6b4f",
+    "accent": "#d4a373",
+    "muted": "#8a7a72"
+  },
+  "radius": "16px",
+  "density": "comfortable"
+}

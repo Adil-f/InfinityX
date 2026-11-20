@@ -1,0 +1,14 @@
+{
+  "id": "clean-retail",
+  "displayFont": "\"DM Sans\", system-ui, sans-serif",
+  "bodyFont": "\"DM Sans\", system-ui, sans-serif",
+  "colors": {
+    "bg": "#ffffff",
+    "ink": "#111827",
+    "primary": "#0f766e",
+    "accent": "#f59e0b",
+    "muted": "#6b7280"
+  },
+  "radius": "12px",
+  "density": "airy"
+}

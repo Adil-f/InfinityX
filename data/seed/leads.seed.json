@@ -1,0 +1,93 @@
+[
+  {
+    "id": "lead_artigiani",
+    "name": "Gli Artigiani",
+    "city": "Nardò",
+    "region": "Puglia",
+    "category": "ristorante",
+    "websiteStatus": "none",
+    "contactPhone": "+39 380 234 3152",
+    "contactEmail": "gliartigianitb@hotmail.com",
+    "fitReason": "Trattoria solo Facebook",
+    "sourceUrl": "https://www.facebook.com/gliartigianinardo",
+    "status": "new"
+  },
+  {
+    "id": "lead_girasole",
+    "name": "Casale Girasole",
+    "city": "Ostia Antica",
+    "region": "Lazio",
+    "category": "ospitalita",
+    "websiteStatus": "social_only",
+    "contactPhone": "+39 333 101 8023",
+    "contactEmail": null,
+    "fitReason": "Solo Facebook come sito",
+    "sourceUrl": "https://www.facebook.com/zeretto.gianna",
+    "status": "new"
+  },
+  {
+    "id": "lead_forno",
+    "name": "Il Forno di Orazio",
+    "city": "Nichelino",
+    "region": "Piemonte",
+    "category": "negozio",
+    "websiteStatus": "social_only",
+    "contactPhone": "+39 011 606 0244",
+    "contactEmail": "ilfornosrl@hotmail.it",
+    "fitReason": "Panificio solo FB",
+    "sourceUrl": "https://www.facebook.com/ilfornodiorazio",
+    "status": "new"
+  },
+  {
+    "id": "lead_fei",
+    "name": "Fei Artigiano",
+    "city": "Modena",
+    "region": "Emilia-Romagna",
+    "category": "artigiano",
+    "websiteStatus": "social_only",
+    "contactPhone": "+39 339 425 1667",
+    "contactEmail": null,
+    "fitReason": "Servizi casa solo FB",
+    "sourceUrl": "https://www.facebook.com/profile.php?id=61560006005962",
+    "status": "new"
+  },
+  {
+    "id": "lead_cervi",
+    "name": "Cervi Mario & Figlio",
+    "city": "Sassuolo",
+    "region": "Emilia-Romagna",
+    "category": "negozio",
+    "websiteStatus": "none",
+    "contactPhone": "+39 0536 801662",
+    "contactEmail": null,
+    "fitReason": "Abbigliamento senza sito",
+    "sourceUrl": "https://facebook.com/490205148022423",
+    "status": "new"
+  },
+  {
+    "id": "lead_falcin",
+    "name": "Autofficina Falcin",
+    "city": "Novi di Modena",
+    "region": "Emilia-Romagna",
+    "category": "servizi",
+    "websiteStatus": "social_only",
+    "contactPhone": "+39 059 676577",
+    "contactEmail": null,
+    "fitReason": "Officina solo FB",
+    "sourceUrl": "https://www.facebook.com/autofficinafalcin",
+    "status": "new"
+  },
+  {
+    "id": "lead_studio",
+    "name": "Studio Esempio",
+    "city": "Milano",
+    "region": "Lombardia",
+    "category": "studio",
+    "websiteStatus": "none",
+    "contactPhone": null,
+    "contactEmail": null,
+    "fitReason": "Demo studio category",
+    "sourceUrl": "https://example.com",
+    "status": "new"
+  }
+]

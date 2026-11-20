@@ -1,0 +1,31 @@
+{
+  "category": "negozio",
+  "layoutFamily": "negozio-catalog",
+  "defaultBrand": "clean-retail",
+  "pages": [
+    "home",
+    "catalog",
+    "contact"
+  ],
+  "sections": [
+    "hero-shop",
+    "catalog-grid",
+    "about-story",
+    "cta-band",
+    "contact-form"
+  ],
+  "nav": [
+    {
+      "href": "index.html",
+      "label": "Home"
+    },
+    {
+      "href": "catalog.html",
+      "label": "Catalogo"
+    },
+    {
+      "href": "contact.html",
+      "label": "Contatti"
+    }
+  ]
+}

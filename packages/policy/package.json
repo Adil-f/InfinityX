@@ -1,0 +1,1 @@
+{"name":"@infinityx/policy","version":"0.1.0","private":true,"main":"src/index.ts","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"^2.1.0","typescript":"^5.7.0"}}

@@ -1,0 +1,31 @@
+{
+  "category": "artigiano",
+  "layoutFamily": "artigiano-workshop",
+  "defaultBrand": "craft-workshop",
+  "pages": [
+    "home",
+    "process",
+    "contact"
+  ],
+  "sections": [
+    "hero-split",
+    "process-steps",
+    "about-story",
+    "gallery-masonry",
+    "contact-form"
+  ],
+  "nav": [
+    {
+      "href": "index.html",
+      "label": "Home"
+    },
+    {
+      "href": "process.html",
+      "label": "Laboratorio"
+    },
+    {
+      "href": "contact.html",
+      "label": "Contatti"
+    }
+  ]
+}
