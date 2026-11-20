@@ -1,0 +1,14 @@
+{
+  "id": "warm-trattoria",
+  "displayFont": "\"Fraunces\", Georgia, serif",
+  "bodyFont": "\"Source Sans 3\", system-ui, sans-serif",
+  "colors": {
+    "bg": "#f7f1e8",
+    "ink": "#2a1f18",
+    "primary": "#8c2f1b",
+    "accent": "#c4a35a",
+    "muted": "#6b5a4e"
+  },
+  "radius": "4px",
+  "density": "comfortable"
+}

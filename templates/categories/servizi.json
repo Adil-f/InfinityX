@@ -1,0 +1,31 @@
+{
+  "category": "servizi",
+  "layoutFamily": "servizi-local",
+  "defaultBrand": "bold-local",
+  "pages": [
+    "home",
+    "services",
+    "contact"
+  ],
+  "sections": [
+    "hero-rail",
+    "services-list",
+    "map-block",
+    "cta-band",
+    "contact-form"
+  ],
+  "nav": [
+    {
+      "href": "index.html",
+      "label": "Home"
+    },
+    {
+      "href": "services.html",
+      "label": "Servizi"
+    },
+    {
+      "href": "contact.html",
+      "label": "Contatti"
+    }
+  ]
+}

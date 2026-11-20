@@ -1,0 +1,31 @@
+{
+  "category": "ristorante",
+  "layoutFamily": "ristorante-editorial",
+  "defaultBrand": "warm-trattoria",
+  "pages": [
+    "home",
+    "menu",
+    "contact"
+  ],
+  "sections": [
+    "hero-editorial",
+    "menu-board",
+    "about-story",
+    "gallery-strip",
+    "contact-form"
+  ],
+  "nav": [
+    {
+      "href": "index.html",
+      "label": "Home"
+    },
+    {
+      "href": "menu.html",
+      "label": "Menu"
+    },
+    {
+      "href": "contact.html",
+      "label": "Contatti"
+    }
+  ]
+}

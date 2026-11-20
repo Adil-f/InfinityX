@@ -1,0 +1,17 @@
+{
+  "name": "infinityx",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @infinityx/agency",
+    "build": "npm run build -w @infinityx/agency",
+    "test": "npm run test -w @infinityx/agency && npm run test -w @infinityx/policy && npm run test -w @infinityx/website-builder && npm run test -w @infinityx/orchestrator",
+    "test:py": "python3 -m pytest packages/scripts/tests -q",
+    "test:all": "bash packages/scripts/run_all_tests.sh",
+    "import:leads": "python3 packages/scripts/import_leads.py",
+    "backup:db": "python3 packages/scripts/backup_db.py"
+  }
+}

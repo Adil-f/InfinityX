@@ -1,0 +1,31 @@
+{
+  "category": "studio",
+  "layoutFamily": "studio-professional",
+  "defaultBrand": "calm-studio",
+  "pages": [
+    "home",
+    "services",
+    "contact"
+  ],
+  "sections": [
+    "hero-centered",
+    "services-cards",
+    "about-story",
+    "faq-list",
+    "contact-form"
+  ],
+  "nav": [
+    {
+      "href": "index.html",
+      "label": "Home"
+    },
+    {
+      "href": "services.html",
+      "label": "Servizi"
+    },
+    {
+      "href": "contact.html",
+      "label": "Contatti"
+    }
+  ]
+}

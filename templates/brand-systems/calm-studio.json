@@ -1,0 +1,14 @@
+{
+  "id": "calm-studio",
+  "displayFont": "\"Libre Baskerville\", Georgia, serif",
+  "bodyFont": "\"Nunito Sans\", system-ui, sans-serif",
+  "colors": {
+    "bg": "#f8fafc",
+    "ink": "#0f172a",
+    "primary": "#334155",
+    "accent": "#64748b",
+    "muted": "#94a3b8"
+  },
+  "radius": "8px",
+  "density": "airy"
+}

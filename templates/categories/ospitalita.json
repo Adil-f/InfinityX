@@ -1,0 +1,31 @@
+{
+  "category": "ospitalita",
+  "layoutFamily": "hospitality-welcome",
+  "defaultBrand": "soft-hospitality",
+  "pages": [
+    "home",
+    "stay",
+    "contact"
+  ],
+  "sections": [
+    "hero-bleed",
+    "welcome-stack",
+    "gallery-strip",
+    "about-story",
+    "contact-form"
+  ],
+  "nav": [
+    {
+      "href": "index.html",
+      "label": "Home"
+    },
+    {
+      "href": "stay.html",
+      "label": "Soggiorno"
+    },
+    {
+      "href": "contact.html",
+      "label": "Contatti"
+    }
+  ]
+}
