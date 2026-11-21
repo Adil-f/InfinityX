@@ -41,11 +41,11 @@ def _audit(db: Session, principal: Principal, action: str, resource_type: str | 
     )
 
 
-def _disabled(db: Session) -> set[str]:
+def _disabled(db: Session, org_id) -> set[str]:
     from app.models import ConnectorState
 
-    rows = db.query(ConnectorState).filter(ConnectorState.enabled.is_(False)).all()
-    return {row.id for row in rows}
+    rows = db.query(ConnectorState).filter(ConnectorState.org_id == org_id, ConnectorState.enabled.is_(False)).all()
+    return {row.connector_id for row in rows}
 
 
 def _load_investigation(db: Session, principal: Principal, investigation_id: uuid.UUID) -> Investigation:
@@ -79,7 +79,7 @@ def execute_search(
     org_preview = db.query(Organization).filter(Organization.id == principal.org_id).one()
     if expected_cost and org_preview.credits_balance < expected_cost:
         raise HTTPException(status_code=402, detail="Insufficient credits")
-    disabled = _disabled(db)
+    disabled = _disabled(db, principal.org_id)
     result = run_query(
         query,
         module,

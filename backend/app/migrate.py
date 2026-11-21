@@ -6,7 +6,10 @@ from sqlalchemy import text
 
 from app.db import engine
 
-MIGRATION_VERSION = "001_init"
+MIGRATIONS = (
+    ("001_init", "001_init.sql"),
+    ("002_access_controls", "002_access_controls.sql"),
+)
 
 
 def _statements(sql: str) -> list[str]:
@@ -24,17 +27,17 @@ def _statements(sql: str) -> list[str]:
     return parts
 
 
-def migrate() -> None:
+def _applied() -> set[str]:
     with engine.connect() as conn:
         exists = conn.execute(text("SELECT to_regclass('public.schema_migrations')")).scalar()
-        if exists:
-            applied = conn.execute(
-                text("SELECT 1 FROM schema_migrations WHERE version = :version"),
-                {"version": MIGRATION_VERSION},
-            ).scalar()
-            if applied:
-                return
-    sql_path = Path(__file__).resolve().parents[1] / "migrations" / "001_init.sql"
+        if not exists:
+            return set()
+        rows = conn.execute(text("SELECT version FROM schema_migrations")).scalars().all()
+        return set(rows)
+
+
+def _apply(filename: str) -> None:
+    sql_path = Path(__file__).resolve().parents[1] / "migrations" / filename
     statements = _statements(sql_path.read_text(encoding="utf-8"))
     raw = engine.raw_connection()
     try:
@@ -47,3 +50,12 @@ def migrate() -> None:
         raise
     finally:
         raw.close()
+
+
+def migrate() -> None:
+    applied = _applied()
+    for version, filename in MIGRATIONS:
+        if version in applied:
+            continue
+        _apply(filename)
+        applied.add(version)

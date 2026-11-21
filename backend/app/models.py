@@ -47,6 +47,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(Text, nullable=False)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mfa_pending_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
     failed_logins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -218,9 +219,10 @@ class Report(Base):
 
 
 class ConnectorState(Base):
-    __tablename__ = "connector_state"
+    __tablename__ = "org_connector_state"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
+    connector_id: Mapped[str] = mapped_column(Text, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_health: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -258,9 +258,13 @@ export function AdminScreen() {
             <tr key={user.id}>
               <td>{user.full_name}<div className="muted">{user.email}{user.is_fixture ? " · development fixture" : ""}</div></td>
               <td>
-                <select aria-label={`Role for ${user.email}`} value={user.role} onChange={(event) => void changeRole(user.id, event.target.value)}>
-                  {["owner", "admin", "investigator", "analyst", "viewer", "billing"].map((item) => <option key={item}>{item}</option>)}
-                </select>
+                {me?.role === "owner" || user.role !== "owner" ? (
+                  <select aria-label={`Role for ${user.email}`} value={user.role} onChange={(event) => void changeRole(user.id, event.target.value)}>
+                    {(me?.role === "owner" ? ["owner", "admin", "investigator", "analyst", "viewer", "billing"] : ["admin", "investigator", "analyst", "viewer", "billing"]).map((item) => <option key={item}>{item}</option>)}
+                  </select>
+                ) : (
+                  <span>{user.role}</span>
+                )}
               </td>
               <td>{user.status}</td>
             </tr>

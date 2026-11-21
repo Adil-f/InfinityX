@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import get_principal
+from app.deps import get_principal, require_session
 from app.models import AuditLog, ConsentRecord, CreditLedger, Organization, User
 from app.security import (
     PLANS,
@@ -49,6 +49,10 @@ class MfaCode(BaseModel):
     code: str
 
 
+class MfaSetupIn(BaseModel):
+    current_code: str | None = None
+
+
 class MfaLogin(BaseModel):
     mfa_token: str
     code: str
@@ -77,8 +81,19 @@ def _public_user(user: User, org: Organization) -> dict:
     }
 
 
+def _note_failure(user: User) -> None:
+    from datetime import timedelta
+
+    user.failed_logins += 1
+    if user.failed_logins >= 5:
+        user.locked_until = utcnow() + timedelta(minutes=15)
+
+
 @router.post("/register")
 def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
+    ip = _client_ip(request) or "unknown"
+    if not allow(f"register:{ip}", limit_for("free", "login")):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     if not body.accept_terms:
         raise HTTPException(status_code=422, detail="Terms must be accepted")
     problem = validate_password(body.password)
@@ -131,11 +146,7 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
             raise HTTPException(status_code=423, detail="Account temporarily locked. Try again later.")
         raise invalid
     if not verify_password(body.password, user.password_hash):
-        user.failed_logins += 1
-        if user.failed_logins >= 5:
-            from datetime import timedelta
-
-            user.locked_until = utcnow() + timedelta(minutes=15)
+        _note_failure(user)
         db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="auth.login_failed", resource_type="user", resource_id=str(user.id), ip=ip, details={}))
         db.commit()
         raise invalid
@@ -154,6 +165,9 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/mfa/login")
 def mfa_login(body: MfaLogin, request: Request, db: Session = Depends(get_db)):
+    ip = _client_ip(request) or "unknown"
+    if not allow(f"mfa:{ip}", limit_for("free", "login")):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     try:
         payload = decode_token(body.mfa_token)
     except Exception as exc:
@@ -161,11 +175,21 @@ def mfa_login(body: MfaLogin, request: Request, db: Session = Depends(get_db)):
     if payload.get("typ") != "mfa":
         raise HTTPException(status_code=401, detail="Invalid token")
     user = db.query(User).filter(User.id == uuid.UUID(payload["sub"])).one_or_none()
-    if not user or not user.mfa_enabled or not user.mfa_secret_encrypted:
+    if not user or user.status != "active" or not user.mfa_enabled or not user.mfa_secret_encrypted:
         raise HTTPException(status_code=401, detail="Invalid token")
     secret = decrypt_secret(user.mfa_secret_encrypted)
-    if not secret or not verify_totp(secret, body.code.strip()):
+    code = body.code.strip()
+    if user.locked_until and user.locked_until > utcnow():
+        if secret and verify_totp(secret, code):
+            raise HTTPException(status_code=423, detail="Account temporarily locked. Try again later.")
         raise HTTPException(status_code=401, detail="Invalid authentication code")
+    if not secret or not verify_totp(secret, code):
+        _note_failure(user)
+        db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="auth.login_failed", resource_type="user", resource_id=str(user.id), ip=ip, details={"mfa": True}))
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid authentication code")
+    user.failed_logins = 0
+    user.locked_until = None
     org = db.query(Organization).filter(Organization.id == user.org_id).one()
     db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="auth.login", resource_type="user", resource_id=str(user.id), ip=_client_ip(request), details={"mfa": True}))
     db.commit()
@@ -174,26 +198,45 @@ def mfa_login(body: MfaLogin, request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/mfa/setup")
-def mfa_setup(principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    if not principal.user_id:
-        raise HTTPException(status_code=403, detail="API keys cannot enroll MFA")
+def mfa_setup(body: MfaSetupIn | None = None, principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
+    require_session(principal)
+    body = body or MfaSetupIn()
     user = db.query(User).filter(User.id == principal.user_id).one()
     secret = new_totp_secret()
-    user.mfa_secret_encrypted = encrypt_secret(secret)
+    encrypted = encrypt_secret(secret)
+    if user.mfa_enabled:
+        current = decrypt_secret(user.mfa_secret_encrypted or "")
+        if not body.current_code or not current or not verify_totp(current, body.current_code.strip()):
+            raise HTTPException(status_code=401, detail="Current authentication code is required to replace MFA")
+        user.mfa_pending_secret_encrypted = encrypted
+        db.commit()
+        return {"secret": secret, "otpauth_uri": totp_uri(secret, user.email), "enabled": True, "pending": True}
+    user.mfa_secret_encrypted = encrypted
+    user.mfa_pending_secret_encrypted = None
     user.mfa_enabled = False
     db.commit()
-    return {"secret": secret, "otpauth_uri": totp_uri(secret, user.email), "enabled": False}
+    return {"secret": secret, "otpauth_uri": totp_uri(secret, user.email), "enabled": False, "pending": False}
 
 
 @router.post("/mfa/verify")
 def mfa_verify(body: MfaCode, principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    if not principal.user_id:
-        raise HTTPException(status_code=403, detail="API keys cannot enroll MFA")
+    require_session(principal)
     user = db.query(User).filter(User.id == principal.user_id).one()
+    code = body.code.strip()
+    if user.mfa_pending_secret_encrypted:
+        pending = decrypt_secret(user.mfa_pending_secret_encrypted)
+        if not pending or not verify_totp(pending, code):
+            raise HTTPException(status_code=401, detail="Invalid authentication code")
+        user.mfa_secret_encrypted = user.mfa_pending_secret_encrypted
+        user.mfa_pending_secret_encrypted = None
+        user.mfa_enabled = True
+        db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="mfa.enable", resource_type="user", resource_id=str(user.id), ip=None, details={"rotated": True}))
+        db.commit()
+        return {"enabled": True}
     if not user.mfa_secret_encrypted:
         raise HTTPException(status_code=422, detail="MFA setup has not been started")
     secret = decrypt_secret(user.mfa_secret_encrypted)
-    if not secret or not verify_totp(secret, body.code.strip()):
+    if not secret or not verify_totp(secret, code):
         raise HTTPException(status_code=401, detail="Invalid authentication code")
     user.mfa_enabled = True
     db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="mfa.enable", resource_type="user", resource_id=str(user.id), ip=None, details={}))
@@ -203,7 +246,7 @@ def mfa_verify(body: MfaCode, principal: Principal = Depends(get_principal), db:
 
 @router.get("/me")
 def me(principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
-    if not principal.user_id:
+    if principal.auth == "api_key" or not principal.user_id:
         org = db.query(Organization).filter(Organization.id == principal.org_id).one()
         return {
             "id": None,

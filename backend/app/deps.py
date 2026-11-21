@@ -49,13 +49,18 @@ def get_principal(
         scopes: set[str] = set()
         for scope in key.scopes.split(","):
             scopes |= API_SCOPE_PERMISSIONS.get(scope.strip(), set())
+        creator = db.query(User).filter(User.id == key.created_by).one_or_none() if key.created_by else None
+        if not creator or creator.status != "active" or creator.org_id != key.org_id:
+            raise HTTPException(status_code=401, detail="Invalid API key")
         key.last_used_at = utcnow()
         db.commit()
         return Principal(
-            user_id=key.created_by,
+            user_id=None,
             org_id=key.org_id,
-            role="investigator",
+            role=creator.role,
             auth="api_key",
+            email=None,
+            full_name=None,
             scopes=scopes,
             api_key_id=key.id,
         )
@@ -69,3 +74,8 @@ def require(permission: str):
         return principal
 
     return dependency
+
+
+def require_session(principal: Principal) -> None:
+    if principal.auth == "api_key" or principal.user_id is None:
+        raise HTTPException(status_code=403, detail="API keys cannot use this user-session route")

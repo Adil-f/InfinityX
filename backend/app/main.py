@@ -7,31 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings, validate_runtime
-from app.connectors.catalog import CONNECTORS
 from app.db import SessionLocal, ping_database
 from app.migrate import migrate
-from app.models import ConnectorState
 from app.seed import seed
 from app.services.ratelimit import get_redis
 from app.routers import auth, platform, search
-
-
-def ensure_connectors() -> None:
-    db = SessionLocal()
-    try:
-        for spec in CONNECTORS:
-            if db.get(ConnectorState, spec["id"]) is None:
-                db.add(ConnectorState(id=spec["id"], enabled=True))
-        db.commit()
-    finally:
-        db.close()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_runtime(settings)
     migrate()
-    ensure_connectors()
     if settings.seed_dev_fixtures and settings.app_env != "test":
         seed()
     yield
@@ -71,17 +57,6 @@ app.include_router(platform.router)
 @app.get("/api/v1/health")
 def health():
     database = "ok" if ping_database() else "error"
-    seeded = False
-    if database == "ok":
-        from app.models import Organization
-
-        db = SessionLocal()
-        try:
-            seeded = db.query(Organization).filter(Organization.is_fixture.is_(True)).count() > 0
-        except Exception:
-            seeded = False
-        finally:
-            db.close()
     redis_client = get_redis()
     redis_status = "unavailable"
     if redis_client is not None:
@@ -94,8 +69,6 @@ def health():
         "status": "ok" if database == "ok" else "degraded",
         "database": database,
         "redis": redis_status,
-        "env": settings.app_env,
-        "fixtures_seeded": seeded,
         "boundaries": "Public sources and configured authorized providers only. No covert surveillance.",
     }
     status = 200 if database == "ok" else 503

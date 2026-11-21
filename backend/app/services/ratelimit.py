@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import deque
 from datetime import datetime, timezone
 
@@ -8,7 +9,8 @@ import redis
 from app.config import settings
 
 _redis_client = None
-_redis_checked = False
+_redis_failed_at = 0.0
+REDIS_RETRY_SECONDS = 5.0
 
 
 def utcnow() -> datetime:
@@ -16,23 +18,27 @@ def utcnow() -> datetime:
 
 
 def get_redis():
-    global _redis_client, _redis_checked
-    if _redis_checked:
+    global _redis_client, _redis_failed_at
+    if _redis_client is not None:
         return _redis_client
-    _redis_checked = True
+    now = time.monotonic()
+    if _redis_failed_at and now - _redis_failed_at < REDIS_RETRY_SECONDS:
+        return None
     try:
         client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1, decode_responses=True)
         client.ping()
         _redis_client = client
+        _redis_failed_at = 0.0
     except Exception:
         _redis_client = None
+        _redis_failed_at = now
     return _redis_client
 
 
 def reset_redis_cache() -> None:
-    global _redis_client, _redis_checked
+    global _redis_client, _redis_failed_at
     _redis_client = None
-    _redis_checked = False
+    _redis_failed_at = 0.0
 
 
 class MemoryRateLimiter:
@@ -69,6 +75,7 @@ def limit_for(plan: str, kind: str) -> int:
 
 
 def allow(key: str, limit: int) -> bool:
+    global _redis_client, _redis_failed_at
     if limit >= 100_000:
         return True
     client = get_redis()
@@ -81,7 +88,8 @@ def allow(key: str, limit: int) -> bool:
                 client.expire(redis_key, 70)
             return count <= limit
         except Exception:
-            pass
+            _redis_client = None
+            _redis_failed_at = time.monotonic()
     return _shared_memory_allow(key, limit)
 
 

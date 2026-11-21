@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.connectors.catalog import CONNECTORS, configuration_status, connector_by_id, missing_env
 from app.db import get_db
-from app.deps import require
+from app.deps import require, require_session
 from app.models import (
     ApiKey,
     AuditLog,
@@ -30,7 +30,7 @@ from app.models import (
     User,
     ConnectorState,
 )
-from app.security import PLANS, Principal, hash_api_key, hash_password, utcnow, validate_password, validate_purpose
+from app.security import API_SCOPE_PERMISSIONS, PLANS, Principal, hash_api_key, hash_password, permissions_for, utcnow, validate_password, validate_purpose
 from app.services.ai import analyze
 from app.services.graph import add_edge
 from app.services.health import probe_connector
@@ -146,7 +146,7 @@ def overview(principal: Principal = Depends(require("read")), db: Session = Depe
         .all()
     )
     sources = []
-    states = {row.id: row for row in db.query(ConnectorState).all()}
+    states = {row.connector_id: row for row in db.query(ConnectorState).filter(ConnectorState.org_id == principal.org_id).all()}
     for spec in CONNECTORS:
         state = states.get(spec["id"])
         enabled = True if state is None else state.enabled
@@ -284,7 +284,7 @@ def create_edge(investigation_id: uuid.UUID, body: EdgeIn, principal: Principal 
             to_node=right.id,
             relation=body.relation,
             evidence=body.evidence,
-            source_id=body.source_id,
+            source_id="analyst_record",
             confidence=body.confidence,
             collected_at=utcnow(),
         )
@@ -343,7 +343,7 @@ def get_report(report_id: uuid.UUID, principal: Principal = Depends(require("rea
 
 @router.get("/sources")
 def list_sources(principal: Principal = Depends(require("read")), db: Session = Depends(get_db)):
-    states = {row.id: row for row in db.query(ConnectorState).all()}
+    states = {row.connector_id: row for row in db.query(ConnectorState).filter(ConnectorState.org_id == principal.org_id).all()}
     payload = []
     for spec in CONNECTORS:
         state = states.get(spec["id"])
@@ -370,17 +370,23 @@ def source_health(source_id: str, principal: Principal = Depends(require("source
     spec = connector_by_id(source_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Unknown source")
-    state = db.query(ConnectorState).filter(ConnectorState.id == source_id).one_or_none()
+    state = db.query(ConnectorState).filter(ConnectorState.org_id == principal.org_id, ConnectorState.connector_id == source_id).one_or_none()
     if state and not state.enabled:
         result = {"status": "disabled", "detail": "Disabled by an administrator. The source was not queried."}
+    elif source_id in {"hibp", "virustotal", "otx", "stripe", "authorized_identity", "github"}:
+        missing = missing_env(spec, settings)
+        if missing:
+            result = {"status": "unavailable", "detail": "Missing configuration. Shared vendor credentials are not probed from organization health checks.", "required_env": missing}
+        else:
+            result = {"status": "not_probed", "detail": "Shared vendor credentials are not used by organization health checks."}
     else:
         result = probe_connector(source_id)
     if state is None:
-        state = ConnectorState(id=source_id, enabled=True)
+        state = ConnectorState(org_id=principal.org_id, connector_id=source_id, enabled=True)
         db.add(state)
     state.last_health = result["status"]
     state.last_checked_at = utcnow()
-    state.last_error = None if result["status"] in {"ok", "unavailable", "disabled"} else result.get("detail")
+    state.last_error = None if result["status"] in {"ok", "unavailable", "disabled", "not_probed"} else result.get("detail")
     db.commit()
     return {"id": source_id, **result}
 
@@ -389,9 +395,9 @@ def source_health(source_id: str, principal: Principal = Depends(require("source
 def patch_source(source_id: str, body: SourcePatch, principal: Principal = Depends(require("sources")), db: Session = Depends(get_db)):
     if not connector_by_id(source_id):
         raise HTTPException(status_code=404, detail="Unknown source")
-    state = db.query(ConnectorState).filter(ConnectorState.id == source_id).one_or_none()
+    state = db.query(ConnectorState).filter(ConnectorState.org_id == principal.org_id, ConnectorState.connector_id == source_id).one_or_none()
     if state is None:
-        state = ConnectorState(id=source_id)
+        state = ConnectorState(org_id=principal.org_id, connector_id=source_id)
         db.add(state)
     state.enabled = body.enabled
     db.add(AuditLog(org_id=principal.org_id, user_id=principal.user_id, action="source.toggle", resource_type="source", resource_id=source_id, details={"enabled": body.enabled}))
@@ -419,7 +425,14 @@ def list_keys(principal: Principal = Depends(require("apikeys")), db: Session = 
 @router.post("/api-keys")
 def create_key(body: KeyIn, principal: Principal = Depends(require("apikeys")), db: Session = Depends(get_db)):
     allowed = {"search", "read"}
-    scopes = [scope for scope in body.scopes if scope in allowed]
+    creator_permissions = permissions_for(principal.role, principal.auth, principal.scopes)
+    scopes = []
+    for scope in body.scopes:
+        if scope not in allowed:
+            raise HTTPException(status_code=422, detail="Choose at least one of: search, read")
+        if not API_SCOPE_PERMISSIONS[scope] <= creator_permissions:
+            raise HTTPException(status_code=422, detail="API key scopes cannot exceed your permissions")
+        scopes.append(scope)
     if not scopes:
         raise HTTPException(status_code=422, detail="Choose at least one of: search, read")
     token = "ix_" + secrets.token_urlsafe(32)
@@ -588,6 +601,8 @@ def patch_user(user_id: uuid.UUID, body: UserPatch, principal: Principal = Depen
     if body.role:
         if body.role not in {"owner", "admin", "investigator", "analyst", "viewer", "billing"}:
             raise HTTPException(status_code=422, detail="Unknown role")
+        if body.role == "owner" and principal.role != "owner":
+            raise HTTPException(status_code=422, detail="Only an owner can assign the owner role")
         if user.role == "owner" and body.role != "owner":
             owners = db.query(User).filter(User.org_id == principal.org_id, User.role == "owner", User.status == "active").count()
             if owners <= 1:
@@ -596,6 +611,10 @@ def patch_user(user_id: uuid.UUID, body: UserPatch, principal: Principal = Depen
     if body.status:
         if body.status not in {"active", "disabled"}:
             raise HTTPException(status_code=422, detail="Unsupported status")
+        if body.status == "disabled" and user.role == "owner":
+            owners = db.query(User).filter(User.org_id == principal.org_id, User.role == "owner", User.status == "active").count()
+            if owners <= 1:
+                raise HTTPException(status_code=422, detail="The organization needs an active owner")
         user.status = body.status
     db.add(AuditLog(org_id=principal.org_id, user_id=principal.user_id, action="user.role_change", resource_type="user", resource_id=str(user.id), details={"role": user.role, "status": user.status}))
     db.commit()
@@ -680,8 +699,7 @@ def run_retention(principal: Principal = Depends(require("admin")), db: Session 
 
 @router.post("/gdpr/export")
 def gdpr_export(principal: Principal = Depends(require("read")), db: Session = Depends(get_db)):
-    if not principal.user_id:
-        raise HTTPException(status_code=403, detail="API keys cannot export a user record")
+    require_session(principal)
     user = db.query(User).filter(User.id == principal.user_id).one()
     org = _org(db, principal)
     consents = db.query(ConsentRecord).filter(ConsentRecord.user_id == user.id).all()
@@ -703,8 +721,7 @@ def gdpr_export(principal: Principal = Depends(require("read")), db: Session = D
 
 @router.post("/gdpr/delete")
 def gdpr_delete(principal: Principal = Depends(require("read")), db: Session = Depends(get_db)):
-    if not principal.user_id:
-        raise HTTPException(status_code=403, detail="API keys cannot delete a user")
+    require_session(principal)
     user = db.query(User).filter(User.id == principal.user_id).one()
     if user.role == "owner":
         owners = db.query(User).filter(User.org_id == user.org_id, User.role == "owner", User.status == "active").count()

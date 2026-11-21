@@ -717,6 +717,18 @@ def virustotal_indicator(kind: str, value: str, client=None) -> SourceOutcome:
     )
 
 
+def otx_section(kind: str, value: str) -> str | None:
+    if kind == "ip":
+        import ipaddress
+
+        try:
+            parsed = ipaddress.ip_address(value)
+        except ValueError:
+            return None
+        return "IPv6" if parsed.version == 6 else "IPv4"
+    return {"domain": "domain", "hash": "file"}.get(kind)
+
+
 def otx_indicator(kind: str, value: str, client=None) -> SourceOutcome:
     if not settings.otx_api_key:
         return SourceOutcome(
@@ -726,7 +738,7 @@ def otx_indicator(kind: str, value: str, client=None) -> SourceOutcome:
             required_env=["OTX_API_KEY"],
             message="OTX_API_KEY is not configured. No pulse data was invented.",
         )
-    section = {"ip": "IPv4", "domain": "domain", "hash": "file"}.get(kind)
+    section = otx_section(kind, value)
     if not section:
         return SourceOutcome(source_id="otx", source_name="AlienVault OTX", status="error", error="Unsupported OTX indicator")
     client = client or default_client()
