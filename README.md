@@ -43,7 +43,7 @@ npm install
 npm run dev
 ```
 
-The API applies `backend/migrations/001_init.sql` on startup.
+The API applies the SQL files in `backend/migrations/` on startup.
 
 Local fixture login, only when seeding is enabled:
 

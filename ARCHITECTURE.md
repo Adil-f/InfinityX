@@ -28,7 +28,7 @@ The graph allows infrastructure and public-account relations such as `has_mx`, `
 
 The investigator is a deterministic pass over stored findings. Facts, references, hypotheses, contradictions, a timeline, and lawful next sources are separate fields. The disclaimer is fixed: the analysis does not accuse a person of a crime. No external model is called.
 
-Billing stores plan allowances and a credit ledger. Stripe Checkout is created only when the secret and price id exist. The webhook updates a plan only after Stripe's signature check. An administrator can set a plan; the ledger reason says no charge was made.
+Billing stores plan allowances and a credit ledger. Stripe Checkout is created only when the secret and price id exist, and it copies the organization and plan onto the subscription. The webhook updates a plan only after Stripe's signature check, and an unpaid checkout session does not grant a plan. A paid invoice refreshes the resolved organization; a failed renewal invoice returns that organization's paid plan to Free. An administrator can set a plan; the ledger reason says no charge was made.
 
 ## Data
 

@@ -4,7 +4,7 @@ import pyotp
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import AuditLog, ConsentRecord, User
+from app.models import AuditLog, ConsentRecord, Organization, User
 from app.services.http_sources import otx_indicator, otx_section
 from app.services.ratelimit import MemoryRateLimiter, get_redis, reset_redis_cache
 import app.services.ratelimit as ratelimit
@@ -31,10 +31,28 @@ def _register(client, prefix="owner"):
     return body["access_token"], email, body["user"]
 
 
+INVITE_PASSWORD = "Invite-Stable-12"
+ACTIVATED_PASSWORD = "Activated-Stable-12"
+
+
 def _login(client, email):
     response = client.post("/api/v1/auth/login", json={"email": email, "password": "Correct-Horse-12"})
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def _activate_invite(client, email, current=INVITE_PASSWORD):
+    pending = client.post("/api/v1/auth/login", json={"email": email, "password": current})
+    assert pending.status_code == 200, pending.text
+    body = pending.json()
+    assert body["password_change_required"] is True
+    assert "access_token" not in body
+    changed = client.post(
+        "/api/v1/auth/password",
+        json={"password_change_token": body["password_change_token"], "new_password": ACTIVATED_PASSWORD},
+    )
+    assert changed.status_code == 200, changed.text
+    return changed.json()
 
 
 class RecordingClient:
@@ -140,10 +158,10 @@ def test_disabled_creator_loses_api_key(client):
     invited = client.post(
         "/api/v1/admin/users",
         headers=_auth(token),
-        json={"email": email, "full_name": "Admin", "role": "admin", "password": "Correct-Horse-12"},
+        json={"email": email, "full_name": "Admin", "role": "admin", "password": INVITE_PASSWORD},
     )
     assert invited.status_code == 200, invited.text
-    analyst = _login(client, email)
+    analyst = _activate_invite(client, email)
     key = client.post("/api/v1/api-keys", headers=_auth(analyst["access_token"]), json={"name": "admin-key", "scopes": ["search"]})
     assert key.status_code == 200, key.text
     users = client.get("/api/v1/admin/users", headers=_auth(token)).json()
@@ -165,10 +183,10 @@ def test_billing_key_cannot_gain_search(client):
     invited = client.post(
         "/api/v1/admin/users",
         headers=_auth(token),
-        json={"email": email, "full_name": "Billing", "role": "billing", "password": "Correct-Horse-12"},
+        json={"email": email, "full_name": "Billing", "role": "billing", "password": INVITE_PASSWORD},
     )
     assert invited.status_code == 200, invited.text
-    billing = _login(client, email)["access_token"]
+    billing = _activate_invite(client, email)["access_token"]
     too_wide = client.post("/api/v1/api-keys", headers=_auth(billing), json={"name": "wide", "scopes": ["search", "read"]})
     assert too_wide.status_code == 422
     read_only = client.post("/api/v1/api-keys", headers=_auth(billing), json={"name": "read", "scopes": ["read"]})
@@ -217,9 +235,9 @@ def test_owner_assignment_and_last_owner_disable(client):
     client.post(
         "/api/v1/admin/users",
         headers=_auth(token),
-        json={"email": admin_email, "full_name": "Admin", "role": "admin", "password": "Correct-Horse-12"},
+        json={"email": admin_email, "full_name": "Admin", "role": "admin", "password": INVITE_PASSWORD},
     )
-    admin = _login(client, admin_email)["access_token"]
+    admin = _activate_invite(client, admin_email)["access_token"]
     users = client.get("/api/v1/admin/users", headers=_auth(admin)).json()
     target = next(row["id"] for row in users if row["email"] == email)
     promoted = client.patch(f"/api/v1/admin/users/{target}", headers=_auth(admin), json={"role": "owner"})
@@ -409,12 +427,13 @@ def test_stripe_webhook_waits_for_paid(client):
     original = stripe.Webhook.construct_event
     token, _, user = _register(client, "stripe-paid")
     org_id = user["org_id"]
+    customer = f"cus_{uuid.uuid4().hex[:12]}"
 
     def event(event_id, event_type, payment_status, object_id="cs_delay"):
         return {
             "id": event_id,
             "type": event_type,
-            "data": {"object": {"id": object_id, "payment_status": payment_status, "metadata": {"org_id": org_id, "plan": "pro"}, "customer": "cus_test"}},
+            "data": {"object": {"id": object_id, "payment_status": payment_status, "metadata": {"org_id": org_id, "plan": "pro"}, "customer": customer}},
         }
 
     try:
@@ -436,6 +455,131 @@ def test_stripe_webhook_waits_for_paid(client):
         assert billing["plan"] == "free"
         bad = client.post("/api/v1/billing/webhook", content=b"{}", headers={"stripe-signature": "nope"})
         assert bad.status_code == 400
+    finally:
+        stripe.Webhook.construct_event = original
+        settings.stripe_webhook_secret = None
+
+
+def test_checkout_copies_plan_onto_the_subscription(client, monkeypatch):
+    import stripe
+
+    token, _, user = _register(client, "stripe-meta")
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return type("Session", (), {"url": "https://checkout.stripe.test/pay"})()
+
+    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_checkout")
+    monkeypatch.setattr(settings, "stripe_price_pro", "price_pro_test")
+    monkeypatch.setattr(stripe.checkout.Session, "create", create)
+    response = client.post("/api/v1/billing/checkout", headers=_auth(token), json={"plan": "pro"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["charged"] is False
+    assert body["url"] == "https://checkout.stripe.test/pay"
+    assert captured["metadata"] == {"org_id": user["org_id"], "plan": "pro"}
+    assert captured["subscription_data"] == {"metadata": {"org_id": user["org_id"], "plan": "pro"}}
+
+
+def _stripe_event(event_id, event_type, obj):
+    return {"id": event_id, "type": event_type, "data": {"object": obj}}
+
+
+def _balance(org_id, balance):
+    db = SessionLocal()
+    try:
+        org = db.query(Organization).filter(Organization.id == uuid.UUID(org_id)).one()
+        org.credits_balance = balance
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_invoice_events_follow_the_stored_subscription(client):
+    import stripe
+
+    original = stripe.Webhook.construct_event
+    token, _, user = _register(client, "stripe-invoice")
+    other_token, _, other = _register(client, "stripe-other")
+    org_id = user["org_id"]
+    suffix = uuid.uuid4().hex[:12]
+    customer = f"cus_{suffix}"
+    subscription = f"sub_{suffix}"
+    try:
+        unpaid = _stripe_post(client, _stripe_event("evt_open", "checkout.session.completed", {
+            "id": f"cs_open_{suffix}",
+            "payment_status": "unpaid",
+            "metadata": {"org_id": org_id, "plan": "pro"},
+            "customer": customer,
+            "subscription": subscription,
+        }))
+        assert unpaid.json()["ignored"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "free"
+
+        paid = _stripe_post(client, _stripe_event(f"evt_cs_paid_{suffix}", "checkout.session.completed", {
+            "id": f"cs_paid_{suffix}",
+            "payment_status": "paid",
+            "metadata": {"org_id": org_id, "plan": "pro"},
+            "customer": customer,
+            "subscription": subscription,
+        }))
+        assert paid.status_code == 200, paid.text
+        assert paid.json()["granted"] is True
+        _balance(org_id, 4)
+
+        missing = _stripe_post(client, _stripe_event(f"evt_unknown_{suffix}", "invoice.paid", {"id": f"in_unknown_{suffix}", "customer": f"cus_nobody_{suffix}"}))
+        assert missing.json()["ignored"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["credits_balance"] == 4
+
+        renewed = _stripe_post(client, _stripe_event(f"evt_renew_{suffix}", "invoice.paid", {
+            "id": f"in_renew_{suffix}",
+            "customer": customer,
+            "parent": {"subscription_details": {"subscription": subscription, "metadata": {"org_id": org_id, "plan": "pro"}}},
+        }))
+        assert renewed.status_code == 200, renewed.text
+        assert renewed.json()["granted"] is True
+        billing = client.get("/api/v1/billing", headers=_auth(token)).json()
+        assert billing["plan"] == "pro"
+        assert billing["credits_balance"] == 1000
+
+        _balance(org_id, 6)
+        by_customer = _stripe_post(client, _stripe_event(f"evt_by_customer_{suffix}", "invoice.paid", {"id": f"in_customer_{suffix}", "customer": customer}))
+        assert by_customer.json()["granted"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["credits_balance"] == 1000
+        again = _stripe_post(client, _stripe_event(f"evt_by_customer_2_{suffix}", "invoice.paid", {"id": f"in_customer_{suffix}", "customer": customer}))
+        assert again.json()["duplicate"] is True
+
+        client.post("/api/v1/billing/plan", headers=_auth(other_token), json={"plan": "enterprise"})
+        customer_only = _stripe_post(client, _stripe_event(f"evt_customer_fail_{suffix}", "invoice.payment_failed", {"id": f"in_customer_fail_{suffix}", "customer": customer}))
+        assert customer_only.json()["ignored"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "pro"
+        assert client.get("/api/v1/billing", headers=_auth(other_token)).json()["plan"] == "enterprise"
+
+        mismatched = _stripe_post(client, _stripe_event(f"evt_mismatch_{suffix}", "invoice.payment_failed", {
+            "id": f"in_mismatch_{suffix}",
+            "customer": customer,
+            "subscription": subscription,
+            "metadata": {"org_id": other["org_id"], "plan": "enterprise"},
+        }))
+        assert mismatched.json()["ignored"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "pro"
+        assert client.get("/api/v1/billing", headers=_auth(other_token)).json()["plan"] == "enterprise"
+
+        failed = _stripe_post(client, _stripe_event(f"evt_lapsed_{suffix}", "invoice.payment_failed", {
+            "id": f"in_lapsed_{suffix}",
+            "subscription": subscription,
+        }))
+        assert failed.status_code == 200, failed.text
+        assert failed.json()["reverted"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "free"
+        assert client.get("/api/v1/billing", headers=_auth(other_token)).json()["plan"] == "enterprise"
+        retry = _stripe_post(client, _stripe_event(f"evt_lapsed_retry_{suffix}", "invoice.payment_failed", {"id": f"in_lapsed_{suffix}", "subscription": subscription}))
+        assert retry.json()["duplicate"] is True
+        client.post("/api/v1/billing/plan", headers=_auth(token), json={"plan": "pro"})
+        assert _stripe_post(client, _stripe_event(f"evt_lapsed_late_{suffix}", "invoice.payment_failed", {"id": f"in_lapsed_{suffix}", "subscription": subscription})).json()["duplicate"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "pro"
     finally:
         stripe.Webhook.construct_event = original
         settings.stripe_webhook_secret = None
@@ -538,9 +682,9 @@ def test_team_list_requires_admin(client):
     assert client.post(
         "/api/v1/admin/users",
         headers=_auth(token),
-        json={"email": email, "full_name": "Viewer", "role": "viewer", "password": "Correct-Horse-12"},
+        json={"email": email, "full_name": "Viewer", "role": "viewer", "password": INVITE_PASSWORD},
     ).status_code == 200
-    viewer = _login(client, email)["access_token"]
+    viewer = _activate_invite(client, email)["access_token"]
     assert client.get("/api/v1/admin/teams", headers=_auth(viewer)).status_code == 403
     assert client.get("/api/v1/admin/teams", headers=_auth(token)).status_code == 200
 
@@ -566,7 +710,7 @@ def test_gdpr_delete_clears_pending_mfa(client):
     invited = client.post(
         "/api/v1/admin/users",
         headers=_auth(owner),
-        json={"email": email, "full_name": "Member", "role": "analyst", "password": "Correct-Horse-12"},
+        json={"email": email, "full_name": "Member", "role": "analyst", "password": INVITE_PASSWORD},
     )
     assert invited.status_code == 200, invited.text
     member_id = invited.json()["id"]
@@ -579,7 +723,7 @@ def test_gdpr_delete_clears_pending_mfa(client):
         db.commit()
     finally:
         db.close()
-    member = _login(client, email)["access_token"]
+    member = _activate_invite(client, email)["access_token"]
     deleted = client.post("/api/v1/gdpr/delete", headers=_auth(member))
     assert deleted.status_code == 200, deleted.text
     db = SessionLocal()
@@ -627,13 +771,13 @@ def test_admin_cannot_demote_an_owner(client):
         assert client.post(
             "/api/v1/admin/users",
             headers=headers,
-            json={"email": email, "full_name": role, "role": role, "password": "Correct-Horse-12"},
+            json={"email": email, "full_name": role, "role": role, "password": INVITE_PASSWORD},
         ).status_code == 200
     users = client.get("/api/v1/admin/users", headers=headers).json()
     second_id = next(row["id"] for row in users if row["email"] == second)
     promoted = client.patch(f"/api/v1/admin/users/{second_id}", headers=headers, json={"role": "owner"})
     assert promoted.status_code == 200, promoted.text
-    admin_token = _login(client, admin)["access_token"]
+    admin_token = _activate_invite(client, admin)["access_token"]
     demoted = client.patch(f"/api/v1/admin/users/{second_id}", headers=_auth(admin_token), json={"role": "analyst"})
     assert demoted.status_code == 422
     disabled = client.patch(f"/api/v1/admin/users/{second_id}", headers=_auth(admin_token), json={"status": "disabled"})
@@ -641,3 +785,57 @@ def test_admin_cannot_demote_an_owner(client):
     still = next(row for row in client.get("/api/v1/admin/users", headers=headers).json() if row["id"] == second_id)
     assert still["role"] == "owner"
     assert still["status"] == "active"
+
+
+def test_invite_password_is_one_time_and_rejects_the_published_example(client):
+    token, _, _ = _register(client, "invite-once")
+    email = f"new-{uuid.uuid4().hex[:8]}@example.com"
+    rejected = client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"email": email, "full_name": "New Analyst", "role": "analyst", "password": "Correct-Horse-12"},
+    )
+    assert rejected.status_code == 422
+
+    invited = client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"email": email, "full_name": "New Analyst", "role": "analyst"},
+    )
+    assert invited.status_code == 200, invited.text
+    temporary = invited.json()["temporary_password"]
+    assert temporary != "Correct-Horse-12"
+    assert invited.json()["password_change_required"] is True
+    listed = client.get("/api/v1/admin/users", headers=_auth(token)).text
+    audit = client.get("/api/v1/admin/audit", headers=_auth(token)).text
+    assert temporary not in listed
+    assert temporary not in audit
+
+    pending = client.post("/api/v1/auth/login", json={"email": email, "password": temporary})
+    assert pending.status_code == 200, pending.text
+    assert pending.json()["password_change_required"] is True
+    assert "access_token" not in pending.json()
+    change_token = pending.json()["password_change_token"]
+    assert client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {change_token}"}).status_code == 401
+    blocked = client.post(
+        "/api/v1/search",
+        headers={"Authorization": f"Bearer {change_token}"},
+        json={"query": "+923001234567", "module": "phone", "purpose": "Authorized security investigation", "lawful_basis": "legitimate_interest"},
+    )
+    assert blocked.status_code == 401
+    assert client.post("/api/v1/auth/password", json={"password_change_token": change_token, "new_password": temporary}).status_code == 422
+    assert client.post("/api/v1/auth/password", json={"password_change_token": change_token, "new_password": "Correct-Horse-12"}).status_code == 422
+    changed = client.post("/api/v1/auth/password", json={"password_change_token": change_token, "new_password": ACTIVATED_PASSWORD})
+    assert changed.status_code == 200, changed.text
+    assert client.get("/api/v1/auth/me", headers=_auth(changed.json()["access_token"])).status_code == 200
+    assert client.post("/api/v1/auth/password", json={"password_change_token": change_token, "new_password": "Another-Stable-12"}).status_code == 401
+
+    chosen_email = f"chosen-{uuid.uuid4().hex[:8]}@example.com"
+    chosen = client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"email": chosen_email, "full_name": "Chosen", "role": "viewer", "password": INVITE_PASSWORD},
+    )
+    assert chosen.status_code == 200, chosen.text
+    assert chosen.json()["temporary_password"] == INVITE_PASSWORD
+    assert chosen.json()["password_change_required"] is True

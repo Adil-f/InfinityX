@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+import secrets
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -70,6 +71,9 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+PUBLISHED_EXAMPLE_PASSWORD = "Correct-Horse-12"
+
+
 def validate_password(password: str) -> str | None:
     if len(password) < 12:
         return "Password must be at least 12 characters"
@@ -78,6 +82,14 @@ def validate_password(password: str) -> str | None:
     if not re.search(r"\d", password):
         return "Password must include a number"
     return None
+
+
+def generate_temporary_password() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    while True:
+        candidate = "".join(secrets.choice(alphabet) for _ in range(24))
+        if validate_password(candidate) is None and candidate != PUBLISHED_EXAMPLE_PASSWORD:
+            return candidate
 
 
 def _fernet() -> Fernet:

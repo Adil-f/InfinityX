@@ -22,6 +22,7 @@ Graph edges require a relation from the allow list, an evidence sentence, and a 
 ## Access
 
 - Passwords are bcrypt hashes and must be at least 12 characters with a letter and a number.
+- An invitation does not start from a published example password. The server creates a one-time password, returns it once to the inviting admin, and the invited account cannot call the rest of the API until that password is changed.
 - Access tokens are short-lived HS256 JWTs. MFA tokens cannot call the API. TOTP secrets are encrypted with a key derived from `SECRET_KEY`. MFA stays off until a code verifies.
 - Five failed passwords lock the account for 15 minutes.
 - Roles limit search, investigation, reporting, billing, source administration, and user administration. API keys intersect those permissions with `search` and `read` only.
@@ -41,7 +42,7 @@ Audit events cover login, search, CNIC checks, graph edits, reports, key managem
 
 ## Stripe
 
-Checkout is a Stripe session when the secret and price are set. This process does not mark an invoice paid by itself. The webhook rejects missing or invalid signatures. A verified `checkout.session.completed` event is the only automatic plan change, and the ledger stores the Stripe event id.
+Checkout is a Stripe session when the secret and price are set. This process does not mark an invoice paid by itself. The webhook rejects missing or invalid signatures. `checkout.session.completed` changes a plan only when `payment_status` is `paid`. Checkout copies `org_id` and `plan` onto the subscription. `invoice.paid` refreshes that organization's allowance, and `invoice.payment_failed` returns that same paid plan to Free. A signed event with no resolved organization and plan does not grant credits.
 
 ## Deployment notes
 

@@ -32,6 +32,8 @@ def get_principal(
         user = db.query(User).filter(User.id == user_id).one_or_none()
         if not user or user.status != "active":
             raise HTTPException(status_code=401, detail="Invalid token")
+        if user.must_change_password:
+            raise HTTPException(status_code=403, detail="Change the temporary password before using the API")
         return Principal(
             user_id=user.id,
             org_id=user.org_id,

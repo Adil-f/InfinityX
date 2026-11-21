@@ -195,7 +195,7 @@ export function AdminScreen() {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState("analyst");
-  const [password, setPassword] = useState("Correct-Horse-12");
+  const [temporaryPassword, setTemporaryPassword] = useState("");
   const [team, setTeam] = useState("");
   const [confirm, setConfirm] = useState("");
   const [message, setMessage] = useState("");
@@ -217,8 +217,9 @@ export function AdminScreen() {
     event.preventDefault();
     setError("");
     try {
-      await api("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ email, full_name: name, role, password }) }, token);
-      setMessage(`Invited ${email}.`);
+      const created = await api<{ temporary_password: string }>("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ email, full_name: name, role }) }, token);
+      setTemporaryPassword(created.temporary_password);
+      setMessage(`Invited ${email}. Share the one-time password below. It is shown once and must be changed at first sign-in.`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invite failed");
@@ -248,8 +249,8 @@ export function AdminScreen() {
             {["analyst", "investigator", "viewer", "billing", "admin"].map((item) => <option key={item}>{item}</option>)}
           </select>
         </label>
-        <label>Temporary password<input value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
         <button className="btn" type="submit">Invite user</button>
+        {temporaryPassword && <p className="note">One-time password: {temporaryPassword}</p>}
       </form>
       <table className="table">
         <thead><tr><th>User</th><th>Role</th><th>Status</th></tr></thead>

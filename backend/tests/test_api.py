@@ -168,10 +168,16 @@ def test_phone_cnic_forensics_graph_and_report(client):
     invite = client.post(
         "/api/v1/admin/users",
         headers=headers,
-        json={"email": f"view-{uuid.uuid4().hex[:8]}@example.com", "full_name": "Viewer", "role": "viewer", "password": "Correct-Horse-12"},
+        json={"email": f"view-{uuid.uuid4().hex[:8]}@example.com", "full_name": "Viewer", "role": "viewer", "password": "Invite-Stable-12"},
     )
     assert invite.status_code == 200, invite.text
-    viewer_login = client.post("/api/v1/auth/login", json={"email": invite.json()["email"], "password": "Correct-Horse-12"})
+    pending = client.post("/api/v1/auth/login", json={"email": invite.json()["email"], "password": "Invite-Stable-12"})
+    assert pending.status_code == 200
+    assert pending.json()["password_change_required"] is True
+    viewer_login = client.post(
+        "/api/v1/auth/password",
+        json={"password_change_token": pending.json()["password_change_token"], "new_password": "Activated-Stable-12"},
+    )
     assert viewer_login.status_code == 200
     forbidden = client.post(
         "/api/v1/search",

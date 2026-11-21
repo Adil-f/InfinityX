@@ -9,6 +9,8 @@ from app.db import engine
 MIGRATIONS = (
     ("001_init", "001_init.sql"),
     ("002_access_controls", "002_access_controls.sql"),
+    ("003_billing_subscription", "003_billing_subscription.sql"),
+    ("004_invite_password", "004_invite_password.sql"),
 )
 
 

@@ -13,6 +13,7 @@ from app.models import AuditLog, ConsentRecord, CreditLedger, Organization, User
 from app.security import (
     PLANS,
     Principal,
+    PUBLISHED_EXAMPLE_PASSWORD,
     hash_password,
     make_token,
     permissions_for,
@@ -58,6 +59,11 @@ class MfaLogin(BaseModel):
     code: str
 
 
+class PasswordChangeIn(BaseModel):
+    password_change_token: str
+    new_password: str = Field(min_length=12, max_length=200)
+
+
 def _client_ip(request: Request) -> str | None:
     if request.client:
         return request.client.host
@@ -78,6 +84,7 @@ def _public_user(user: User, org: Organization) -> dict:
         "is_fixture": user.is_fixture,
         "organization_is_fixture": org.is_fixture,
         "permissions": sorted(permissions_for(user.role)),
+        "password_change_required": user.must_change_password,
     }
 
 
@@ -151,6 +158,11 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
         db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="auth.login_failed", resource_type="user", resource_id=str(user.id), ip=ip, details={}))
         db.commit()
         raise invalid
+    if user.must_change_password:
+        token = make_token(user_id=user.id, org_id=user.org_id, role=user.role, minutes=15, typ="password_change")
+        db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="auth.login", resource_type="user", resource_id=str(user.id), ip=ip, details={"password_change_required": True}))
+        db.commit()
+        return {"password_change_required": True, "password_change_token": token, "mfa_required": False}
     if user.mfa_enabled:
         token = make_token(user_id=user.id, org_id=user.org_id, role=user.role, minutes=5, typ="mfa")
         db.commit()
@@ -162,6 +174,46 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     org = db.query(Organization).filter(Organization.id == user.org_id).one()
     token = make_token(user_id=user.id, org_id=user.org_id, role=user.role, minutes=30, typ="access")
     return {"access_token": token, "token_type": "bearer", "mfa_required": False, "user": _public_user(user, org)}
+
+
+@router.post("/password")
+def change_password(body: PasswordChangeIn, request: Request, db: Session = Depends(get_db)):
+    ip = _client_ip(request) or "unknown"
+    limit = limit_for("free", "login")
+    if not allow(f"password:{ip}", limit):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        payload = decode_token(body.password_change_token)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
+    if payload.get("typ") != "password_change":
+        raise HTTPException(status_code=401, detail="Invalid token")
+    try:
+        user_id = uuid.UUID(payload["sub"])
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
+    user = db.query(User).filter(User.id == user_id).one_or_none()
+    if not user or user.status != "active" or not user.must_change_password:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if not allow(f"password:acct:{user.id}", limit):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    new_password = body.new_password.strip()
+    if new_password == PUBLISHED_EXAMPLE_PASSWORD:
+        raise HTTPException(status_code=422, detail="Choose a password that is not a published example")
+    problem = validate_password(new_password)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+    if verify_password(new_password, user.password_hash):
+        raise HTTPException(status_code=422, detail="Choose a different password from the temporary one")
+    user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+    user.failed_logins = 0
+    user.locked_until = None
+    db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="auth.password_change", resource_type="user", resource_id=str(user.id), ip=ip, details={}))
+    db.commit()
+    org = db.query(Organization).filter(Organization.id == user.org_id).one()
+    token = make_token(user_id=user.id, org_id=user.org_id, role=user.role, minutes=30, typ="access")
+    return {"access_token": token, "token_type": "bearer", "password_change_required": False, "user": _public_user(user, org)}
 
 
 @router.post("/mfa/login")

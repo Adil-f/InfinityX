@@ -30,7 +30,7 @@ from app.models import (
     User,
     ConnectorState,
 )
-from app.security import API_SCOPE_PERMISSIONS, PLANS, Principal, hash_api_key, hash_password, permissions_for, utcnow, validate_password, validate_purpose
+from app.security import API_SCOPE_PERMISSIONS, PLANS, PUBLISHED_EXAMPLE_PASSWORD, Principal, generate_temporary_password, hash_api_key, hash_password, permissions_for, utcnow, validate_password, validate_purpose
 from app.services.ai import analyze
 from app.services.graph import add_edge
 from app.services.health import probe_connector
@@ -74,7 +74,7 @@ class UserIn(BaseModel):
     email: str
     full_name: str
     role: str
-    password: str
+    password: str | None = None
 
 
 class UserPatch(BaseModel):
@@ -503,13 +503,15 @@ def checkout(body: PlanIn, principal: Principal = Depends(require("billing")), d
 
     stripe.api_key = settings.stripe_secret_key
     org = _org(db, principal)
+    billing_metadata = {"org_id": str(org.id), "plan": body.plan}
     try:
         session = stripe.checkout.Session.create(
             mode="subscription",
             line_items=[{"price": price, "quantity": 1}],
             success_url=f"{settings.public_app_url}/billing?checkout=success",
             cancel_url=f"{settings.public_app_url}/billing?checkout=cancel",
-            metadata={"org_id": str(org.id), "plan": body.plan},
+            metadata=dict(billing_metadata),
+            subscription_data={"metadata": dict(billing_metadata)},
             customer_email=principal.email,
         )
     except Exception as exc:
@@ -545,6 +547,14 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     return apply_stripe_event(db, event)
 
 
+def _stripe_id(value) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, dict):
+        return _stripe_id(value.get("id"))
+    return None
+
+
 def _stripe_subject(event: dict) -> dict | None:
     event_type = event.get("type")
     data = (event.get("data") or {}).get("object") or {}
@@ -556,37 +566,105 @@ def _stripe_subject(event: dict) -> dict | None:
         metadata = data.get("metadata") or {}
         return {
             "kind": "session",
-            "id": data.get("id"),
-            "plan": metadata.get("plan"),
-            "org_id": metadata.get("org_id"),
+            "id": _stripe_id(data.get("id")),
+            "plan": metadata.get("plan") or None,
+            "org_id": metadata.get("org_id") or None,
             "payment_status": data.get("payment_status"),
-            "customer": data.get("customer"),
+            "customer": _stripe_id(data.get("customer")),
+            "subscription": _stripe_id(data.get("subscription")),
             "event_type": event_type,
         }
     if event_type in {"invoice.paid", "invoice.payment_failed"}:
         metadata = {}
         metadata.update((data.get("subscription_details") or {}).get("metadata") or {})
-        metadata.update(((data.get("parent") or {}).get("subscription_details") or {}).get("metadata") or {})
+        parent_subscription = (data.get("parent") or {}).get("subscription_details") or {}
+        metadata.update(parent_subscription.get("metadata") or {})
         metadata.update(data.get("metadata") or {})
+        subscription = _stripe_id(data.get("subscription")) or _stripe_id(parent_subscription.get("subscription"))
         return {
             "kind": "invoice",
-            "id": data.get("id"),
-            "plan": metadata.get("plan"),
-            "org_id": metadata.get("org_id"),
+            "id": _stripe_id(data.get("id")),
+            "plan": metadata.get("plan") or None,
+            "org_id": metadata.get("org_id") or None,
             "payment_status": "paid" if event_type == "invoice.paid" else "unpaid",
-            "customer": data.get("customer"),
+            "customer": _stripe_id(data.get("customer")),
+            "subscription": subscription,
             "event_type": event_type,
         }
     return None
 
 
+def _org_for_stripe(db: Session, subject: dict) -> tuple[Organization | None, str | None]:
+    metadata_org = None
+    if subject.get("org_id"):
+        try:
+            org_uuid = uuid.UUID(str(subject["org_id"]))
+        except ValueError:
+            return None, None
+        metadata_org = db.query(Organization).filter(Organization.id == org_uuid).one_or_none()
+        if metadata_org is None:
+            return None, None
+    subscription_org = None
+    customer_org = None
+    if subject.get("subscription"):
+        subscription_org = db.query(Organization).filter(Organization.stripe_subscription_id == subject["subscription"]).one_or_none()
+    if subject.get("customer"):
+        customer_org = db.query(Organization).filter(Organization.stripe_customer_id == subject["customer"]).one_or_none()
+    if metadata_org is not None:
+        if subscription_org is not None and subscription_org.id != metadata_org.id:
+            return None, None
+        if customer_org is not None and customer_org.id != metadata_org.id:
+            return None, None
+        return metadata_org, "metadata"
+    if subscription_org is not None and customer_org is not None and subscription_org.id != customer_org.id:
+        return None, None
+    if subscription_org is not None:
+        return subscription_org, "subscription"
+    if customer_org is not None:
+        return customer_org, "customer"
+    return None, None
+
+
+def _paid_plan(subject: dict, org: Organization | None, via: str | None) -> str | None:
+    named = subject.get("plan")
+    if named:
+        return named if named in {"pro", "enterprise"} else None
+    if subject["event_type"] == "invoice.paid" and via in {"metadata", "subscription", "customer"} and org and org.plan in {"pro", "enterprise"}:
+        return org.plan
+    return None
+
+
+def _remember_stripe_ids(db: Session, org: Organization, subject: dict) -> None:
+    customer = subject.get("customer")
+    subscription = subject.get("subscription")
+    if customer:
+        taken = db.query(Organization).filter(Organization.stripe_customer_id == customer, Organization.id != org.id).one_or_none()
+        if taken is None:
+            org.stripe_customer_id = customer
+    if subscription:
+        taken = db.query(Organization).filter(Organization.stripe_subscription_id == subscription, Organization.id != org.id).one_or_none()
+        if taken is None:
+            org.stripe_subscription_id = subscription
+
+
+def _invoice_failure_target(org: Organization | None, subject: dict, via: str | None) -> bool:
+    if org is None or via not in {"metadata", "subscription"}:
+        return False
+    named = subject.get("plan")
+    if named and named not in {"pro", "enterprise"}:
+        return False
+    if named and org.plan in {"pro", "enterprise"} and named != org.plan:
+        return False
+    if subject.get("subscription") and org.stripe_subscription_id and subject["subscription"] != org.stripe_subscription_id:
+        return False
+    return True
+
+
 def apply_stripe_event(db: Session, event: dict) -> dict:
     subject = _stripe_subject(event)
-    if not subject or subject["plan"] not in PLANS or not subject["org_id"] or not subject["id"]:
+    if not subject or not subject["id"]:
         return {"received": True, "ignored": True}
-    org = db.query(Organization).filter(Organization.id == uuid.UUID(str(subject["org_id"]))).one_or_none()
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
+    org, via = _org_for_stripe(db, subject)
     key = f"stripe:{subject['kind']}:{subject['id']}"
     event_type = subject["event_type"]
     paid = event_type in {"checkout.session.async_payment_succeeded", "invoice.paid"} or (
@@ -594,17 +672,40 @@ def apply_stripe_event(db: Session, event: dict) -> dict:
     )
     failed = event_type in {"checkout.session.async_payment_failed", "invoice.payment_failed"}
     if paid:
+        plan = _paid_plan(subject, org, via)
+        if org is None or plan is None:
+            return {"received": True, "ignored": True}
+        if db.query(CreditLedger).filter(CreditLedger.org_id == org.id, CreditLedger.reason == f"{key}:failed").one_or_none():
+            return {"received": True, "ignored": True}
         if db.query(CreditLedger).filter(CreditLedger.org_id == org.id, CreditLedger.reason == key).one_or_none():
             return {"received": True, "duplicate": True}
-        org.plan = subject["plan"]
-        org.credits_balance = PLANS[subject["plan"]]["credits"]
-        if subject["customer"]:
-            org.stripe_customer_id = str(subject["customer"])
-        db.add(CreditLedger(org_id=org.id, delta=PLANS[subject["plan"]]["credits"], reason=key))
-        db.add(AuditLog(org_id=org.id, user_id=None, action="billing.stripe_webhook", resource_type="organization", resource_id=str(org.id), details={"plan": subject["plan"], "event": event.get("id"), "payment_status": "paid"}))
+        org.plan = plan
+        org.credits_balance = PLANS[plan]["credits"]
+        _remember_stripe_ids(db, org, subject)
+        db.add(CreditLedger(org_id=org.id, delta=PLANS[plan]["credits"], reason=key))
+        db.add(AuditLog(org_id=org.id, user_id=None, action="billing.stripe_webhook", resource_type="organization", resource_id=str(org.id), details={"plan": plan, "event": event.get("id"), "payment_status": "paid"}))
         db.commit()
         return {"received": True, "granted": True}
+    if failed and event_type == "invoice.payment_failed":
+        if not _invoice_failure_target(org, subject, via):
+            return {"received": True, "ignored": True}
+        reason = f"{key}:failed"
+        if db.query(CreditLedger).filter(CreditLedger.org_id == org.id, CreditLedger.reason == reason).one_or_none():
+            return {"received": True, "duplicate": True}
+        named = subject.get("plan")
+        if org.plan in {"pro", "enterprise"} and (not named or named == org.plan):
+            org.plan = "free"
+            org.credits_balance = PLANS["free"]["credits"]
+            db.add(CreditLedger(org_id=org.id, delta=0, reason=reason))
+            db.add(AuditLog(org_id=org.id, user_id=None, action="billing.stripe_webhook", resource_type="organization", resource_id=str(org.id), details={"plan": "free", "event": event.get("id"), "payment_status": "failed"}))
+            db.commit()
+            return {"received": True, "reverted": True}
+        db.add(CreditLedger(org_id=org.id, delta=0, reason=reason))
+        db.commit()
+        return {"received": True, "ignored": True}
     if failed:
+        if org is None or subject.get("plan") not in PLANS:
+            return {"received": True, "ignored": True}
         grant = db.query(CreditLedger).filter(CreditLedger.org_id == org.id, CreditLedger.reason == key).one_or_none()
         if grant and org.plan == subject["plan"]:
             org.plan = "free"
@@ -630,18 +731,39 @@ def list_users(principal: Principal = Depends(require("admin")), db: Session = D
 def invite_user(body: UserIn, principal: Principal = Depends(require("admin")), db: Session = Depends(get_db)):
     if body.role not in {"admin", "investigator", "analyst", "viewer", "billing"}:
         raise HTTPException(status_code=422, detail="Role cannot be assigned")
-    problem = validate_password(body.password)
-    if problem:
-        raise HTTPException(status_code=422, detail=problem)
+    supplied = (body.password or "").strip()
+    if supplied:
+        if supplied == PUBLISHED_EXAMPLE_PASSWORD:
+            raise HTTPException(status_code=422, detail="Choose a password that is not a published example")
+        problem = validate_password(supplied)
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
+        temporary = supplied
+    else:
+        temporary = generate_temporary_password()
     email = body.email.strip().lower()
     if db.query(User).filter(User.email == email).one_or_none():
         raise HTTPException(status_code=409, detail="An account with that email already exists")
-    user = User(org_id=principal.org_id, email=email, full_name=body.full_name.strip(), role=body.role, password_hash=hash_password(body.password), is_fixture=False)
+    user = User(
+        org_id=principal.org_id,
+        email=email,
+        full_name=body.full_name.strip(),
+        role=body.role,
+        password_hash=hash_password(temporary),
+        must_change_password=True,
+        is_fixture=False,
+    )
     db.add(user)
     db.flush()
-    db.add(AuditLog(org_id=principal.org_id, user_id=principal.user_id, action="user.invite", resource_type="user", resource_id=str(user.id), details={"role": body.role}))
+    db.add(AuditLog(org_id=principal.org_id, user_id=principal.user_id, action="user.invite", resource_type="user", resource_id=str(user.id), details={"role": body.role, "password_change_required": True}))
     db.commit()
-    return {"id": str(user.id), "email": user.email, "role": user.role}
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "role": user.role,
+        "temporary_password": temporary,
+        "password_change_required": True,
+    }
 
 
 @router.patch("/admin/users/{user_id}")
@@ -785,6 +907,7 @@ def gdpr_delete(principal: Principal = Depends(require("read")), db: Session = D
     user.email = f"deleted-{user.id}@redacted.invalid"
     user.full_name = "Deleted user"
     user.password_hash = hash_password(secrets.token_urlsafe(18) + "a1")
+    user.must_change_password = False
     user.mfa_enabled = False
     user.mfa_secret_encrypted = None
     user.mfa_pending_secret_encrypted = None
