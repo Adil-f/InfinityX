@@ -8,7 +8,6 @@ from app.services.classify import classify_query, is_ip, normalize_domain
 from app.services.cnic import inspect_cnic
 from app.services.dns_source import cymru_asn, dns_lookup, reverse_dns
 from app.services.http_sources import (
-    authorized_identity,
     crtsh_domain,
     github_user,
     gitlab_user,
@@ -280,22 +279,18 @@ def run_cnic(query: str, purpose: str, case_id: str | None = None, disabled: set
             status="unavailable",
             message="Disabled by an administrator. No identity provider was queried.",
         )
-        return inspect_cnic(query, provider)
-    provider = authorized_identity(query, purpose, case_id)
-    if provider.status == "ok":
-        result = inspect_cnic(query)
-        result.unavailable = [item for item in result.unavailable if item.get("source_id") != "authorized_identity"]
-        result.transient["provider_response"] = {
-            "source_id": "authorized_identity",
-            "stored_at_rest": False,
-            "payload": provider.details.get("payload"),
-            "note": "Returned by the operator-configured provider. Infinity X did not add identity data of its own.",
-        }
-        result.notes.append("The authorized provider response is shown once and is not written to the findings table.")
-        result.external_attempted = True
+        result = inspect_cnic(query, provider)
+        result.external_attempted = False
         return result
-    result = inspect_cnic(query, provider)
-    result.external_attempted = provider.status == "error"
+    result = inspect_cnic(query, SourceOutcome(
+        source_id="authorized_identity",
+        source_name="Authorized identity provider",
+        status="unavailable",
+        required_env=["ORG_IDENTITY_PROVIDER_URL", "ORG_IDENTITY_PROVIDER_TOKEN"],
+        message="No organization identity provider is configured. Format validation only. NADRA and shared operator credentials are not queried.",
+    ))
+    result.external_attempted = False
+    result.transient.pop("provider_response", None)
     return result
 
 

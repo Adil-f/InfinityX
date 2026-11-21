@@ -41,6 +41,18 @@ def _audit(db: Session, principal: Principal, action: str, resource_type: str | 
     )
 
 
+def uses_keyed_vendor(query_type: str) -> bool:
+    from app.config import settings
+
+    if query_type in {"username", "social"}:
+        return True
+    if query_type == "email" and settings.hibp_api_key:
+        return True
+    if query_type in {"threat", "ip", "url"} and (settings.virustotal_api_key or settings.otx_api_key):
+        return True
+    return False
+
+
 def _disabled(db: Session, org_id) -> set[str]:
     from app.models import ConnectorState
 
@@ -76,9 +88,20 @@ def execute_search(
     investigation = _load_investigation(db, principal, investigation_id) if investigation_id else None
     preview = classify_query(query, module if module and module != "universal" else None)
     expected_cost = 0 if preview["query_type"] in LOCAL_MODULES | {"ambiguous_numeric", "rejected"} else credit_cost(preview["query_type"])
-    org_preview = db.query(Organization).filter(Organization.id == principal.org_id).one()
-    if expected_cost and org_preview.credits_balance < expected_cost:
-        raise HTTPException(status_code=402, detail="Insufficient credits")
+    reserved = False
+    org_locked = None
+    if uses_keyed_vendor(preview["query_type"]):
+        org_locked = db.query(Organization).filter(Organization.id == principal.org_id).with_for_update().one()
+        if org_locked.credits_balance < 1:
+            db.rollback()
+            raise HTTPException(status_code=402, detail="Insufficient credits")
+        org_locked.credits_balance -= 1
+        reserved = True
+        db.flush()
+    else:
+        org_preview = db.query(Organization).filter(Organization.id == principal.org_id).one()
+        if expected_cost and org_preview.credits_balance < expected_cost:
+            raise HTTPException(status_code=402, detail="Insufficient credits")
     disabled = _disabled(db, principal.org_id)
     result = run_query(
         query,
@@ -89,6 +112,8 @@ def execute_search(
         disabled=disabled,
     )
     if result.status in {"needs_disambiguation", "rejected"}:
+        if reserved and org_locked is not None:
+            org_locked.credits_balance += 1
         _audit(
             db,
             principal,
@@ -109,11 +134,16 @@ def execute_search(
             "message": "A fixture result was blocked and was not returned.",
         })
     result.findings = findings
-    cost = credit_cost(result.query_type) if result.external_attempted else 0
-    org = db.query(Organization).filter(Organization.id == principal.org_id).with_for_update().one()
-    if cost and org.credits_balance < cost:
-        db.rollback()
-        raise HTTPException(status_code=402, detail="Insufficient credits")
+    cost = 1 if result.external_attempted else 0
+    if reserved and org_locked is not None:
+        org = org_locked
+        if cost == 0:
+            org.credits_balance += 1
+    else:
+        org = db.query(Organization).filter(Organization.id == principal.org_id).with_for_update().one()
+        if cost and org.credits_balance < cost:
+            db.rollback()
+            raise HTTPException(status_code=402, detail="Insufficient credits")
     stored_query = result.normalized_query if result.query_type == "cnic" else query.strip()[:512]
     audit_details = {"query_type": result.query_type, "module": module or result.query_type, "external": result.external_attempted}
     if result.query_type == "cnic":
@@ -139,8 +169,9 @@ def execute_search(
     )
     db.add(job)
     db.flush()
-    if cost:
+    if cost and not reserved:
         org.credits_balance -= cost
+    if cost:
         db.add(CreditLedger(org_id=org.id, delta=-cost, reason="search", search_job_id=job.id))
     rows = []
     for finding in findings:

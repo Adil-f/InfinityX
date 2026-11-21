@@ -626,7 +626,7 @@ def patch_user(user_id: uuid.UUID, body: UserPatch, principal: Principal = Depen
 
 
 @router.get("/admin/teams")
-def list_teams(principal: Principal = Depends(require("read")), db: Session = Depends(get_db)):
+def list_teams(principal: Principal = Depends(require("admin")), db: Session = Depends(get_db)):
     teams = db.query(Team).filter(Team.org_id == principal.org_id).all()
     payload = []
     for team in teams:

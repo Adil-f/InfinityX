@@ -134,9 +134,10 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
 @router.post("/login")
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     ip = _client_ip(request) or "unknown"
-    if not allow(f"login:{ip}", limit_for("free", "login")):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     email = body.email.strip().lower()
+    limit = limit_for("free", "login")
+    if not allow(f"login:{ip}", limit) or not allow(f"login:acct:{email}", limit):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     user = db.query(User).filter(User.email == email).one_or_none()
     invalid = HTTPException(status_code=401, detail="Invalid email or password")
     if not user or user.status != "active":
@@ -150,12 +151,12 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
         db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="auth.login_failed", resource_type="user", resource_id=str(user.id), ip=ip, details={}))
         db.commit()
         raise invalid
-    user.failed_logins = 0
-    user.locked_until = None
     if user.mfa_enabled:
         token = make_token(user_id=user.id, org_id=user.org_id, role=user.role, minutes=5, typ="mfa")
         db.commit()
         return {"mfa_required": True, "mfa_token": token}
+    user.failed_logins = 0
+    user.locked_until = None
     db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="auth.login", resource_type="user", resource_id=str(user.id), ip=ip, details={}))
     db.commit()
     org = db.query(Organization).filter(Organization.id == user.org_id).one()
@@ -166,7 +167,8 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
 @router.post("/mfa/login")
 def mfa_login(body: MfaLogin, request: Request, db: Session = Depends(get_db)):
     ip = _client_ip(request) or "unknown"
-    if not allow(f"mfa:{ip}", limit_for("free", "login")):
+    limit = limit_for("free", "login")
+    if not allow(f"mfa:{ip}", limit):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     try:
         payload = decode_token(body.mfa_token)
@@ -177,6 +179,8 @@ def mfa_login(body: MfaLogin, request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == uuid.UUID(payload["sub"])).one_or_none()
     if not user or user.status != "active" or not user.mfa_enabled or not user.mfa_secret_encrypted:
         raise HTTPException(status_code=401, detail="Invalid token")
+    if not allow(f"mfa:acct:{user.id}", limit):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
     secret = decrypt_secret(user.mfa_secret_encrypted)
     code = body.code.strip()
     if user.locked_until and user.locked_until > utcnow():

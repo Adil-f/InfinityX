@@ -32,9 +32,13 @@ class AttachIn(BaseModel):
     investigation_id: uuid.UUID
 
 
+MAX_EVIDENCE_BYTES = 1_048_576
+MAX_EVIDENCE_BASE64_CHARS = ((MAX_EVIDENCE_BYTES + 2) // 3) * 4
+
+
 class ForensicsIn(BaseModel):
-    text: str | None = None
-    content_base64: str | None = None
+    text: str | None = Field(default=None, max_length=MAX_EVIDENCE_BYTES)
+    content_base64: str | None = Field(default=None, max_length=MAX_EVIDENCE_BASE64_CHARS)
     filename: str | None = None
     purpose: str
     lawful_basis: str

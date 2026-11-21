@@ -289,6 +289,163 @@ def test_vendor_health_does_not_call_shared_credentials(client, monkeypatch):
         settings.hibp_api_key = None
 
 
+def test_cnic_does_not_call_a_shared_identity_provider(client, monkeypatch):
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        raise AssertionError("shared identity provider was called")
+
+    monkeypatch.setattr("app.services.http_sources.authorized_identity", boom)
+    token, _, user = _register(client, "cnic-local")
+    headers = _auth(token)
+    invalid = client.post(
+        "/api/v1/search",
+        headers=headers,
+        json={"query": "not-a-cnic", "module": "cnic", "purpose": "Authorized security investigation", "lawful_basis": "legal_obligation", "consent": True},
+    )
+    assert invalid.status_code == 200, invalid.text
+    assert invalid.json()["credits_charged"] == 0
+    assert "provider_response" not in invalid.json()
+    valid = client.post(
+        "/api/v1/search",
+        headers=headers,
+        json={"query": "35202-1234567-1", "module": "cnic", "purpose": "Authorized security investigation", "lawful_basis": "legal_obligation", "consent": True},
+    )
+    assert valid.status_code == 200, valid.text
+    body = valid.json()
+    assert body["credits_charged"] == 0
+    assert "provider_response" not in body
+    assert any(item["source_id"] == "authorized_identity" for item in body["unavailable"])
+    assert calls["n"] == 0
+    assert user["credits_balance"] >= body["credits_remaining"]
+
+
+def test_external_attempt_charges_even_for_cnic(client, monkeypatch):
+    from app.services.results import ModuleResult
+
+    token, _, user = _register(client, "cnic-cost")
+
+    def fake_run_query(*args, **kwargs):
+        return ModuleResult(query_type="cnic", normalized_query="3****-*******-1", external_attempted=True)
+
+    monkeypatch.setattr("app.services.search_service.run_query", fake_run_query)
+    response = client.post(
+        "/api/v1/search",
+        headers=_auth(token),
+        json={"query": "35202-1234567-1", "module": "cnic", "purpose": "Authorized security investigation", "lawful_basis": "legal_obligation", "consent": True},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["credits_charged"] == 1
+    assert response.json()["credits_remaining"] == user["credits_balance"] - 1
+    assert "provider_response" not in response.json()
+
+
+def test_password_login_does_not_reset_mfa_failures(client):
+    token, email, _ = _register(client, "mfa-lock")
+    setup = client.post("/api/v1/auth/mfa/setup", headers=_auth(token))
+    secret = setup.json()["secret"]
+    assert client.post("/api/v1/auth/mfa/verify", headers=_auth(token), json={"code": pyotp.TOTP(secret).now()}).status_code == 200
+    first = _login(client, email)
+    for _ in range(3):
+        assert client.post("/api/v1/auth/mfa/login", json={"mfa_token": first["mfa_token"], "code": "000000"}).status_code == 401
+    second = _login(client, email)
+    assert second.get("mfa_required") is True
+    for _ in range(2):
+        assert client.post("/api/v1/auth/mfa/login", json={"mfa_token": second["mfa_token"], "code": "000000"}).status_code == 401
+    locked = client.post("/api/v1/auth/mfa/login", json={"mfa_token": second["mfa_token"], "code": pyotp.TOTP(secret).now()})
+    assert locked.status_code == 423
+    again = client.post("/api/v1/auth/login", json={"email": email, "password": "Correct-Horse-12"})
+    assert again.status_code == 423
+    assert "mfa_token" not in again.json()
+
+
+def test_login_and_mfa_are_limited_per_account(client, monkeypatch):
+    seen = []
+
+    def allow(key, limit):
+        seen.append(str(key))
+        return True
+
+    monkeypatch.setattr("app.routers.auth.allow", allow)
+    token, email, _ = _register(client, "acct-limit")
+    seen.clear()
+    assert client.post("/api/v1/auth/login", json={"email": email, "password": "Correct-Horse-12"}).status_code == 200
+    assert f"login:acct:{email}" in seen
+    setup = client.post("/api/v1/auth/mfa/setup", headers=_auth(token))
+    secret = setup.json()["secret"]
+    assert client.post("/api/v1/auth/mfa/verify", headers=_auth(token), json={"code": pyotp.TOTP(secret).now()}).status_code == 200
+    seen.clear()
+    pending = client.post("/api/v1/auth/login", json={"email": email, "password": "Correct-Horse-12"}).json()
+    client.post("/api/v1/auth/mfa/login", json={"mfa_token": pending["mfa_token"], "code": "000000"})
+    assert any(key.startswith("mfa:acct:") for key in seen)
+
+
+def test_forensics_rejects_oversized_bodies(client):
+    token, _, _ = _register(client, "big-file")
+    headers = {**_auth(token), "Content-Type": "application/json"}
+    oversized = client.post(
+        "/api/v1/forensics",
+        headers=headers,
+        json={"text": "a" * (1_048_576 + 1), "purpose": "Authorized security investigation", "lawful_basis": "legitimate_interest"},
+    )
+    assert oversized.status_code == 422
+    huge = client.post("/api/v1/forensics", headers=headers, content=b"x" * 2_100_000)
+    assert huge.status_code == 413
+
+
+def test_keyed_lookup_reserves_credits_before_the_call(client, monkeypatch):
+    from app.db import SessionLocal
+    from app.models import Organization
+    from app.services.results import SourceOutcome
+    from app.services.search_service import uses_keyed_vendor
+
+    assert uses_keyed_vendor("username") is True
+    assert uses_keyed_vendor("domain") is False
+    settings.hibp_api_key = "test-key"
+    try:
+        assert uses_keyed_vendor("email") is True
+    finally:
+        settings.hibp_api_key = None
+    token, _, user = _register(client, "reserve")
+    org_id = uuid.UUID(user["org_id"])
+    held = []
+
+    def fake_github(username, client=None):
+        session = SessionLocal()
+        try:
+            session.query(Organization).filter(Organization.id == org_id).with_for_update(nowait=True).one()
+            held.append(False)
+        except Exception:
+            held.append(True)
+        finally:
+            session.rollback()
+            session.close()
+        return SourceOutcome(source_id="github", source_name="GitHub public API", status="not_found")
+
+    monkeypatch.setattr("app.services.modules.github_user", fake_github)
+    response = client.post(
+        "/api/v1/search",
+        headers=_auth(token),
+        json={"query": "ada", "module": "username", "purpose": "Authorized security investigation", "lawful_basis": "legitimate_interest"},
+    )
+    assert response.status_code == 200, response.text
+    assert held == [True]
+
+
+def test_team_list_requires_admin(client):
+    token, _, _ = _register(client, "teams")
+    email = f"viewer-{uuid.uuid4().hex[:8]}@example.com"
+    assert client.post(
+        "/api/v1/admin/users",
+        headers=_auth(token),
+        json={"email": email, "full_name": "Viewer", "role": "viewer", "password": "Correct-Horse-12"},
+    ).status_code == 200
+    viewer = _login(client, email)["access_token"]
+    assert client.get("/api/v1/admin/teams", headers=_auth(viewer)).status_code == 403
+    assert client.get("/api/v1/admin/teams", headers=_auth(token)).status_code == 200
+
+
 def test_github_health_probes_the_public_api(client, monkeypatch):
     token, _, _ = _register(client, "github-health")
     seen = {}

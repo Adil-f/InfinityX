@@ -48,6 +48,49 @@ async def security_headers(request, call_next):
     return response
 
 
+MAX_REQUEST_BYTES = 2_000_000
+
+
+class RequestSizeLimit:
+    def __init__(self, app, max_bytes: int = MAX_REQUEST_BYTES):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        chunks = []
+        total = 0
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                chunks.append(message)
+                continue
+            total += len(message.get("body") or b"")
+            chunks.append(message)
+            if total > self.max_bytes:
+                body = b'{"detail":"Request body is too large"}'
+                await send({"type": "http.response.start", "status": 413, "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ]})
+                await send({"type": "http.response.body", "body": body})
+                return
+            if not message.get("more_body", False):
+                break
+        index = 0
+
+        async def replay():
+            nonlocal index
+            message = chunks[index]
+            index += 1
+            return message
+
+        await self.app(scope, replay, send)
+
+
+app.add_middleware(RequestSizeLimit)
 app.include_router(auth.router)
 app.include_router(search.router)
 app.include_router(platform.router)
