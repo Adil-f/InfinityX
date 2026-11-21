@@ -31,7 +31,7 @@ def _audit(db: Session, principal: Principal, action: str, resource_type: str | 
     db.add(
         AuditLog(
             org_id=principal.org_id,
-            user_id=principal.user_id,
+            user_id=principal.actor_id,
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
@@ -123,7 +123,7 @@ def execute_search(
     job = SearchJob(
         org_id=principal.org_id,
         investigation_id=investigation.id if investigation else None,
-        user_id=principal.user_id,
+        user_id=principal.actor_id,
         query=stored_query,
         normalized_query=result.normalized_query or stored_query,
         query_type=result.query_type,
@@ -169,11 +169,11 @@ def execute_search(
         subject_type = SUBJECT_TYPE.get(result.query_type, result.query_type)
         project_findings(db, principal.org_id, investigation.id, subject_type, result.normalized_query, findings)
     text_version = "cnic-format-v1" if result.query_type == "cnic" else "search-v1"
-    if principal.user_id:
+    if principal.actor_id:
         db.add(
             ConsentRecord(
                 org_id=principal.org_id,
-                user_id=principal.user_id,
+                user_id=principal.actor_id,
                 purpose=purpose.strip(),
                 lawful_basis=lawful_basis,
                 subject_type=result.query_type,

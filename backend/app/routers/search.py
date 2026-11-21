@@ -107,7 +107,7 @@ def forensics(body: ForensicsIn, request: Request, principal: Principal = Depend
     job = SearchJob(
         org_id=principal.org_id,
         investigation_id=body.investigation_id,
-        user_id=principal.user_id,
+        user_id=principal.actor_id,
         query=hashed.normalized_query,
         normalized_query=hashed.normalized_query,
         query_type="forensics",
@@ -149,9 +149,9 @@ def forensics(body: ForensicsIn, request: Request, principal: Principal = Depend
                 is_fixture=False,
             )
         )
-    if principal.user_id:
-        db.add(ConsentRecord(org_id=principal.org_id, user_id=principal.user_id, purpose=body.purpose.strip(), lawful_basis=body.lawful_basis, subject_type="forensics", text_version="forensics-v1"))
-    db.add(AuditLog(org_id=principal.org_id, user_id=principal.user_id, action="forensics.hash", resource_type="search_job", resource_id=str(job.id), ip=_ip(request), details={"bytes": len(content), "content_stored": False}))
+    if principal.actor_id:
+        db.add(ConsentRecord(org_id=principal.org_id, user_id=principal.actor_id, purpose=body.purpose.strip(), lawful_basis=body.lawful_basis, subject_type="forensics", text_version="forensics-v1"))
+    db.add(AuditLog(org_id=principal.org_id, user_id=principal.actor_id, action="forensics.hash", resource_type="search_job", resource_id=str(job.id), ip=_ip(request), details={"bytes": len(content), "content_stored": False}))
     if body.investigation_id:
         from app.services.graph import project_findings
 

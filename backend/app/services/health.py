@@ -38,10 +38,7 @@ def probe_connector(source_id: str) -> dict:
         if source_id == "ripestat":
             return _from_outcome(ripestat_prefix("8.8.8.8"))
         if source_id == "github":
-            headers = {"User-Agent": USER_AGENT}
-            if settings.github_token:
-                headers["Authorization"] = f"Bearer {settings.github_token}"
-            response = httpx.get("https://api.github.com/rate_limit", headers=headers, timeout=10)
+            response = httpx.get("https://api.github.com/rate_limit", headers={"User-Agent": USER_AGENT}, timeout=10)
             if response.status_code == 200:
                 return {"status": "ok", "detail": "GitHub rate-limit endpoint responded"}
             return {"status": "error", "detail": f"GitHub HTTP {response.status_code}"}

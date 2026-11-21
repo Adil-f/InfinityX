@@ -40,6 +40,7 @@ def get_principal(
             email=user.email,
             full_name=user.full_name,
             is_fixture=user.is_fixture,
+            actor_id=user.id,
         )
     if x_api_key:
         digest = hash_api_key(x_api_key)
@@ -63,6 +64,7 @@ def get_principal(
             full_name=None,
             scopes=scopes,
             api_key_id=key.id,
+            actor_id=creator.id,
         )
     raise HTTPException(status_code=401, detail="Authentication required")
 

@@ -290,7 +290,7 @@ def create_edge(investigation_id: uuid.UUID, body: EdgeIn, principal: Principal 
         )
     except PolicyError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    db.add(AuditLog(org_id=principal.org_id, user_id=principal.user_id, action="graph.edge", resource_type="graph_edge", resource_id=str(edge.id), details={"relation": body.relation, "source_id": body.source_id}))
+    db.add(AuditLog(org_id=principal.org_id, user_id=principal.actor_id, action="graph.edge", resource_type="graph_edge", resource_id=str(edge.id), details={"relation": body.relation, "source_id": edge.source_id}))
     db.commit()
     return {"id": str(edge.id), "relation": edge.relation, "confidence": edge.confidence, "analyst_asserted": edge.source_id == "analyst_record"}
 
@@ -373,7 +373,7 @@ def source_health(source_id: str, principal: Principal = Depends(require("source
     state = db.query(ConnectorState).filter(ConnectorState.org_id == principal.org_id, ConnectorState.connector_id == source_id).one_or_none()
     if state and not state.enabled:
         result = {"status": "disabled", "detail": "Disabled by an administrator. The source was not queried."}
-    elif source_id in {"hibp", "virustotal", "otx", "stripe", "authorized_identity", "github"}:
+    elif source_id in {"hibp", "virustotal", "otx", "stripe", "authorized_identity"}:
         missing = missing_env(spec, settings)
         if missing:
             result = {"status": "unavailable", "detail": "Missing configuration. Shared vendor credentials are not probed from organization health checks.", "required_env": missing}
@@ -601,6 +601,8 @@ def patch_user(user_id: uuid.UUID, body: UserPatch, principal: Principal = Depen
     if body.role:
         if body.role not in {"owner", "admin", "investigator", "analyst", "viewer", "billing"}:
             raise HTTPException(status_code=422, detail="Unknown role")
+        if user.role == "owner" and body.role != user.role and principal.role != "owner":
+            raise HTTPException(status_code=422, detail="Only an owner can change an owner's role")
         if body.role == "owner" and principal.role != "owner":
             raise HTTPException(status_code=422, detail="Only an owner can assign the owner role")
         if user.role == "owner" and body.role != "owner":
@@ -732,6 +734,7 @@ def gdpr_delete(principal: Principal = Depends(require("read")), db: Session = D
     user.password_hash = hash_password(secrets.token_urlsafe(18) + "a1")
     user.mfa_enabled = False
     user.mfa_secret_encrypted = None
+    user.mfa_pending_secret_encrypted = None
     user.status = "deleted"
     db.query(ConsentRecord).filter(ConsentRecord.user_id == user.id).delete(synchronize_session=False)
     for key in db.query(ApiKey).filter(ApiKey.created_by == user.id).all():

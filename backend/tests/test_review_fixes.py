@@ -3,6 +3,8 @@ import uuid
 import pyotp
 
 from app.config import settings
+from app.db import SessionLocal
+from app.models import AuditLog, ConsentRecord, User
 from app.services.http_sources import otx_indicator, otx_section
 from app.services.ratelimit import MemoryRateLimiter, get_redis, reset_redis_cache
 import app.services.ratelimit as ratelimit
@@ -263,6 +265,9 @@ def test_manual_edges_cannot_claim_connector_provenance(client):
     stored = client.get(f"/api/v1/investigations/{investigation}/graph", headers=headers).json()["edges"][0]
     assert stored["source_id"] == "analyst_record"
     assert stored["analyst_asserted"] is True
+    audits = client.get("/api/v1/admin/audit", headers=headers).json()
+    recorded = next(row for row in audits if row["action"] == "graph.edge")
+    assert recorded["details"]["source_id"] == "analyst_record"
 
 
 def test_vendor_health_does_not_call_shared_credentials(client, monkeypatch):
@@ -282,3 +287,96 @@ def test_vendor_health_does_not_call_shared_credentials(client, monkeypatch):
         assert called["n"] == 0
     finally:
         settings.hibp_api_key = None
+
+
+def test_github_health_probes_the_public_api(client, monkeypatch):
+    token, _, _ = _register(client, "github-health")
+    seen = {}
+
+    def fake(source_id):
+        seen["id"] = source_id
+        return {"status": "ok", "detail": "GitHub rate-limit endpoint responded"}
+
+    monkeypatch.setattr("app.routers.platform.probe_connector", fake)
+    response = client.post("/api/v1/sources/github/health", headers=_auth(token))
+    assert response.status_code == 200, response.text
+    assert seen["id"] == "github"
+    assert response.json()["status"] == "ok"
+
+
+def test_gdpr_delete_clears_pending_mfa(client):
+    owner, _, _ = _register(client, "gdpr-owner")
+    email = f"member-{uuid.uuid4().hex[:8]}@example.com"
+    invited = client.post(
+        "/api/v1/admin/users",
+        headers=_auth(owner),
+        json={"email": email, "full_name": "Member", "role": "analyst", "password": "Correct-Horse-12"},
+    )
+    assert invited.status_code == 200, invited.text
+    member_id = invited.json()["id"]
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == member_id).one()
+        user.mfa_secret_encrypted = "active-secret"
+        user.mfa_pending_secret_encrypted = "pending-secret"
+        user.mfa_enabled = False
+        db.commit()
+    finally:
+        db.close()
+    member = _login(client, email)["access_token"]
+    deleted = client.post("/api/v1/gdpr/delete", headers=_auth(member))
+    assert deleted.status_code == 200, deleted.text
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == member_id).one()
+        assert user.mfa_secret_encrypted is None
+        assert user.mfa_pending_secret_encrypted is None
+        assert user.mfa_enabled is False
+    finally:
+        db.close()
+
+
+def test_api_key_search_attributes_consent_to_creator(client):
+    token, _, owner = _register(client, "key-audit")
+    created = client.post("/api/v1/api-keys", headers=_auth(token), json={"name": "search", "scopes": ["search"]})
+    assert created.status_code == 200, created.text
+    searched = client.post(
+        "/api/v1/search",
+        headers={"X-API-Key": created.json()["token"]},
+        json={"query": "+923001234567", "module": "phone", "purpose": "Authorized security investigation", "lawful_basis": "legitimate_interest"},
+    )
+    assert searched.status_code == 200, searched.text
+    me = client.get("/api/v1/auth/me", headers={"X-API-Key": created.json()["token"]})
+    assert me.json()["role"] == "api_key"
+    db = SessionLocal()
+    try:
+        consent = db.query(ConsentRecord).filter(ConsentRecord.user_id == owner["id"], ConsentRecord.subject_type == "phone").one()
+        audit = (
+            db.query(AuditLog)
+            .filter(AuditLog.user_id == owner["id"], AuditLog.action == "search.run", AuditLog.resource_id == searched.json()["job_id"])
+            .one()
+        )
+        assert consent.purpose.startswith("Authorized")
+        assert audit.user_id is not None
+    finally:
+        db.close()
+
+
+def test_admin_cannot_demote_an_owner(client):
+    token, _, _ = _register(client, "demote")
+    headers = _auth(token)
+    second = f"second-{uuid.uuid4().hex[:8]}@example.com"
+    admin = f"admin-{uuid.uuid4().hex[:8]}@example.com"
+    for email, role in ((second, "investigator"), (admin, "admin")):
+        assert client.post(
+            "/api/v1/admin/users",
+            headers=headers,
+            json={"email": email, "full_name": role, "role": role, "password": "Correct-Horse-12"},
+        ).status_code == 200
+    users = client.get("/api/v1/admin/users", headers=headers).json()
+    second_id = next(row["id"] for row in users if row["email"] == second)
+    promoted = client.patch(f"/api/v1/admin/users/{second_id}", headers=headers, json={"role": "owner"})
+    assert promoted.status_code == 200, promoted.text
+    admin_token = _login(client, admin)["access_token"]
+    demoted = client.patch(f"/api/v1/admin/users/{second_id}", headers=_auth(admin_token), json={"role": "analyst"})
+    assert demoted.status_code == 422

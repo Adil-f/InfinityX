@@ -175,6 +175,7 @@ class Principal:
     is_fixture: bool = False
     scopes: set[str] = field(default_factory=set)
     api_key_id: uuid.UUID | None = None
+    actor_id: uuid.UUID | None = None
 
     def allows(self, permission: str) -> bool:
         return permission in permissions_for(self.role, self.auth, self.scopes)
