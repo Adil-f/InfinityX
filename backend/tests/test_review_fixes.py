@@ -380,3 +380,8 @@ def test_admin_cannot_demote_an_owner(client):
     admin_token = _login(client, admin)["access_token"]
     demoted = client.patch(f"/api/v1/admin/users/{second_id}", headers=_auth(admin_token), json={"role": "analyst"})
     assert demoted.status_code == 422
+    disabled = client.patch(f"/api/v1/admin/users/{second_id}", headers=_auth(admin_token), json={"status": "disabled"})
+    assert disabled.status_code == 422
+    still = next(row for row in client.get("/api/v1/admin/users", headers=headers).json() if row["id"] == second_id)
+    assert still["role"] == "owner"
+    assert still["status"] == "active"

@@ -613,6 +613,8 @@ def patch_user(user_id: uuid.UUID, body: UserPatch, principal: Principal = Depen
     if body.status:
         if body.status not in {"active", "disabled"}:
             raise HTTPException(status_code=422, detail="Unsupported status")
+        if body.status != user.status and user.role == "owner" and principal.role != "owner":
+            raise HTTPException(status_code=422, detail="Only an owner can change an owner's status")
         if body.status == "disabled" and user.role == "owner":
             owners = db.query(User).filter(User.org_id == principal.org_id, User.role == "owner", User.status == "active").count()
             if owners <= 1:
