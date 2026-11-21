@@ -29,24 +29,6 @@ app = FastAPI(
     summary="Authorized public-source intelligence for security teams.",
     lifespan=lifespan,
 )
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.middleware("http")
-async def security_headers(request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
-    return response
-
 
 MAX_REQUEST_BYTES = 2_000_000
 
@@ -64,6 +46,9 @@ class RequestSizeLimit:
         total = 0
         while True:
             message = await receive()
+            if message["type"] == "http.disconnect":
+                chunks.append(message)
+                break
             if message["type"] != "http.request":
                 chunks.append(message)
                 continue
@@ -83,6 +68,8 @@ class RequestSizeLimit:
 
         async def replay():
             nonlocal index
+            if index >= len(chunks):
+                return {"type": "http.disconnect"}
             message = chunks[index]
             index += 1
             return message
@@ -91,6 +78,25 @@ class RequestSizeLimit:
 
 
 app.add_middleware(RequestSizeLimit)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+    return response
+
+
 app.include_router(auth.router)
 app.include_router(search.router)
 app.include_router(platform.router)

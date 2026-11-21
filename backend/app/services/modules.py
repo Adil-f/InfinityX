@@ -286,8 +286,11 @@ def run_cnic(query: str, purpose: str, case_id: str | None = None, disabled: set
         source_id="authorized_identity",
         source_name="Authorized identity provider",
         status="unavailable",
-        required_env=["ORG_IDENTITY_PROVIDER_URL", "ORG_IDENTITY_PROVIDER_TOKEN"],
-        message="No organization identity provider is configured. Format validation only. NADRA and shared operator credentials are not queried.",
+        required_env=[],
+        message=(
+            "CNIC checks are format validation only. NADRA is not queried. "
+            "Setting AUTHORIZED_IDENTITY_PROVIDER_URL or AUTHORIZED_IDENTITY_PROVIDER_TOKEN does not make this search call a provider."
+        ),
     ))
     result.external_attempted = False
     result.transient.pop("provider_response", None)

@@ -81,7 +81,7 @@ No sample payload is substituted.
 | `GITHUB_TOKEN` | Optional. Public GitHub works without it |
 | `STRIPE_SECRET_KEY`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_ENTERPRISE` | Stripe Checkout. Nothing is charged locally |
 | `STRIPE_WEBHOOK_SECRET` | Signed Stripe webhooks |
-| `AUTHORIZED_IDENTITY_PROVIDER_URL`, `AUTHORIZED_IDENTITY_PROVIDER_TOKEN` | Operator HTTPS identity provider. The URL must be HTTPS. NADRA is not queried |
+| `AUTHORIZED_IDENTITY_PROVIDER_URL`, `AUTHORIZED_IDENTITY_PROVIDER_TOKEN` | Not used by CNIC search. Setting them does not send a CNIC to a provider. NADRA is not queried |
 
 Other settings: `APP_ENV`, `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `CORS_ORIGINS`, `PUBLIC_APP_URL`, `SEED_DEV_FIXTURES`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ACCESS_TOKEN_MINUTES`.
 

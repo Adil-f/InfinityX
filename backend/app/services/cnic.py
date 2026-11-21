@@ -81,8 +81,11 @@ def inspect_cnic(raw: str, provider: SourceOutcome | None = None) -> ModuleResul
             source_id="authorized_identity",
             source_name="Authorized identity provider",
             status="unavailable",
-            required_env=["AUTHORIZED_IDENTITY_PROVIDER_URL", "AUTHORIZED_IDENTITY_PROVIDER_TOKEN"],
-            message="No authorized identity provider is configured. NADRA and other private identity registries are not queried.",
+            required_env=[],
+            message=(
+                "CNIC checks are format validation only. NADRA is not queried. "
+                "AUTHORIZED_IDENTITY_PROVIDER_URL and AUTHORIZED_IDENTITY_PROVIDER_TOKEN are not used by this search."
+            ),
         )
     absorb(result, provider)
     return result

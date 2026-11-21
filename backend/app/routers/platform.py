@@ -542,28 +542,79 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         event = stripe.Webhook.construct_event(payload, signature, settings.stripe_webhook_secret)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid Stripe signature") from exc
-    if event.get("type") != "checkout.session.completed":
+    return apply_stripe_event(db, event)
+
+
+def _stripe_subject(event: dict) -> dict | None:
+    event_type = event.get("type")
+    data = (event.get("data") or {}).get("object") or {}
+    if event_type in {
+        "checkout.session.completed",
+        "checkout.session.async_payment_succeeded",
+        "checkout.session.async_payment_failed",
+    }:
+        metadata = data.get("metadata") or {}
+        return {
+            "kind": "session",
+            "id": data.get("id"),
+            "plan": metadata.get("plan"),
+            "org_id": metadata.get("org_id"),
+            "payment_status": data.get("payment_status"),
+            "customer": data.get("customer"),
+            "event_type": event_type,
+        }
+    if event_type in {"invoice.paid", "invoice.payment_failed"}:
+        metadata = {}
+        metadata.update((data.get("subscription_details") or {}).get("metadata") or {})
+        metadata.update(((data.get("parent") or {}).get("subscription_details") or {}).get("metadata") or {})
+        metadata.update(data.get("metadata") or {})
+        return {
+            "kind": "invoice",
+            "id": data.get("id"),
+            "plan": metadata.get("plan"),
+            "org_id": metadata.get("org_id"),
+            "payment_status": "paid" if event_type == "invoice.paid" else "unpaid",
+            "customer": data.get("customer"),
+            "event_type": event_type,
+        }
+    return None
+
+
+def apply_stripe_event(db: Session, event: dict) -> dict:
+    subject = _stripe_subject(event)
+    if not subject or subject["plan"] not in PLANS or not subject["org_id"] or not subject["id"]:
         return {"received": True, "ignored": True}
-    data = event["data"]["object"]
-    metadata = data.get("metadata") or {}
-    plan = metadata.get("plan")
-    org_id = metadata.get("org_id")
-    if plan not in PLANS or not org_id:
-        return {"received": True, "ignored": True}
-    reason = f"stripe:{event['id']}"
-    if db.query(CreditLedger).filter(CreditLedger.reason == reason).one_or_none():
-        return {"received": True, "duplicate": True}
-    org = db.query(Organization).filter(Organization.id == uuid.UUID(str(org_id))).one_or_none()
+    org = db.query(Organization).filter(Organization.id == uuid.UUID(str(subject["org_id"]))).one_or_none()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
-    org.plan = plan
-    org.credits_balance = PLANS[plan]["credits"]
-    if data.get("customer"):
-        org.stripe_customer_id = str(data.get("customer"))
-    db.add(CreditLedger(org_id=org.id, delta=PLANS[plan]["credits"], reason=reason))
-    db.add(AuditLog(org_id=org.id, user_id=None, action="billing.stripe_webhook", resource_type="organization", resource_id=str(org.id), details={"plan": plan, "event": event["id"]}))
-    db.commit()
-    return {"received": True}
+    key = f"stripe:{subject['kind']}:{subject['id']}"
+    event_type = subject["event_type"]
+    paid = event_type in {"checkout.session.async_payment_succeeded", "invoice.paid"} or (
+        event_type == "checkout.session.completed" and subject["payment_status"] == "paid"
+    )
+    failed = event_type in {"checkout.session.async_payment_failed", "invoice.payment_failed"}
+    if paid:
+        if db.query(CreditLedger).filter(CreditLedger.org_id == org.id, CreditLedger.reason == key).one_or_none():
+            return {"received": True, "duplicate": True}
+        org.plan = subject["plan"]
+        org.credits_balance = PLANS[subject["plan"]]["credits"]
+        if subject["customer"]:
+            org.stripe_customer_id = str(subject["customer"])
+        db.add(CreditLedger(org_id=org.id, delta=PLANS[subject["plan"]]["credits"], reason=key))
+        db.add(AuditLog(org_id=org.id, user_id=None, action="billing.stripe_webhook", resource_type="organization", resource_id=str(org.id), details={"plan": subject["plan"], "event": event.get("id"), "payment_status": "paid"}))
+        db.commit()
+        return {"received": True, "granted": True}
+    if failed:
+        grant = db.query(CreditLedger).filter(CreditLedger.org_id == org.id, CreditLedger.reason == key).one_or_none()
+        if grant and org.plan == subject["plan"]:
+            org.plan = "free"
+            org.credits_balance = PLANS["free"]["credits"]
+            db.add(CreditLedger(org_id=org.id, delta=0, reason=f"{key}:failed"))
+            db.add(AuditLog(org_id=org.id, user_id=None, action="billing.stripe_webhook", resource_type="organization", resource_id=str(org.id), details={"plan": "free", "event": event.get("id"), "payment_status": "failed"}))
+            db.commit()
+            return {"received": True, "reverted": True}
+        return {"received": True, "ignored": True}
+    return {"received": True, "ignored": True}
 
 
 @router.get("/admin/users")

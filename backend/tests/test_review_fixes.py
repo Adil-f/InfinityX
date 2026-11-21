@@ -316,7 +316,9 @@ def test_cnic_does_not_call_a_shared_identity_provider(client, monkeypatch):
     body = valid.json()
     assert body["credits_charged"] == 0
     assert "provider_response" not in body
-    assert any(item["source_id"] == "authorized_identity" for item in body["unavailable"])
+    assert any(item["source_id"] == "authorized_identity" and item["required_env"] == [] for item in body["unavailable"])
+    assert "ORG_IDENTITY" not in valid.text
+    assert "does not make this search call a provider" in valid.text
     assert calls["n"] == 0
     assert user["credits_balance"] >= body["credits_remaining"]
 
@@ -379,6 +381,103 @@ def test_login_and_mfa_are_limited_per_account(client, monkeypatch):
     pending = client.post("/api/v1/auth/login", json={"email": email, "password": "Correct-Horse-12"}).json()
     client.post("/api/v1/auth/mfa/login", json={"mfa_token": pending["mfa_token"], "code": "000000"})
     assert any(key.startswith("mfa:acct:") for key in seen)
+
+
+def _stripe_post(client, event):
+    import json
+    import stripe
+
+    settings.stripe_webhook_secret = "whsec_test_secret_value"
+
+    def construct(payload, signature, secret):
+        if signature != "test-ok" or secret != settings.stripe_webhook_secret:
+            raise ValueError("bad signature")
+        return json.loads(payload)
+
+    stripe.Webhook.construct_event = construct
+    return client.post(
+        "/api/v1/billing/webhook",
+        content=json.dumps(event),
+        headers={"stripe-signature": "test-ok", "content-type": "application/json"},
+    )
+
+
+def test_stripe_webhook_waits_for_paid(client):
+    import json
+    import stripe
+
+    original = stripe.Webhook.construct_event
+    token, _, user = _register(client, "stripe-paid")
+    org_id = user["org_id"]
+
+    def event(event_id, event_type, payment_status, object_id="cs_delay"):
+        return {
+            "id": event_id,
+            "type": event_type,
+            "data": {"object": {"id": object_id, "payment_status": payment_status, "metadata": {"org_id": org_id, "plan": "pro"}, "customer": "cus_test"}},
+        }
+
+    try:
+        unpaid = _stripe_post(client, event("evt_unpaid", "checkout.session.completed", "unpaid"))
+        assert unpaid.status_code == 200, unpaid.text
+        assert unpaid.json()["ignored"] is True
+        billing = client.get("/api/v1/billing", headers=_auth(token)).json()
+        assert billing["plan"] == "free"
+        assert billing["credits_balance"] == user["credits_balance"]
+        paid = _stripe_post(client, event("evt_paid", "checkout.session.async_payment_succeeded", "paid"))
+        assert paid.status_code == 200, paid.text
+        assert paid.json()["granted"] is True
+        billing = client.get("/api/v1/billing", headers=_auth(token)).json()
+        assert billing["plan"] == "pro"
+        failed = _stripe_post(client, event("evt_failed", "checkout.session.async_payment_failed", "unpaid"))
+        assert failed.status_code == 200, failed.text
+        assert failed.json()["reverted"] is True
+        billing = client.get("/api/v1/billing", headers=_auth(token)).json()
+        assert billing["plan"] == "free"
+        bad = client.post("/api/v1/billing/webhook", content=b"{}", headers={"stripe-signature": "nope"})
+        assert bad.status_code == 400
+    finally:
+        stripe.Webhook.construct_event = original
+        settings.stripe_webhook_secret = None
+
+
+def test_request_size_limit_disconnect_and_cors(client):
+    import asyncio
+
+    from app.main import RequestSizeLimit
+
+    async def scenario():
+        calls = {"n": 0}
+
+        async def receive():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"type": "http.request", "body": b"abc", "more_body": True}
+            if calls["n"] == 2:
+                return {"type": "http.disconnect"}
+            raise AssertionError("receive waited after disconnect")
+
+        seen = []
+
+        async def inner(scope, receive, send):
+            for _ in range(4):
+                message = await receive()
+                seen.append(message["type"])
+
+        await RequestSizeLimit(inner, max_bytes=100)({"type": "http"}, receive, lambda message: None)
+        assert calls["n"] == 2
+        assert seen[0] == "http.request"
+        assert seen[1:] == ["http.disconnect", "http.disconnect", "http.disconnect"]
+
+    asyncio.run(scenario())
+    response = client.post(
+        "/api/v1/forensics",
+        content=b"x" * 2_100_000,
+        headers={"Origin": "http://localhost:3000", "Content-Type": "application/json"},
+    )
+    assert response.status_code == 413
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert response.headers.get("x-content-type-options") == "nosniff"
 
 
 def test_forensics_rejects_oversized_bodies(client):

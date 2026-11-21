@@ -154,10 +154,10 @@ CONNECTORS: list[dict] = [
         "id": "authorized_identity",
         "name": "Authorized identity provider",
         "category": "identity",
-        "required_env": ["AUTHORIZED_IDENTITY_PROVIDER_URL", "AUTHORIZED_IDENTITY_PROVIDER_TOKEN"],
+        "required_env": [],
         "rate_per_minute": 6,
         "timeout_seconds": 10,
-        "description": "Operator-configured HTTPS provider. The platform does not ship a NADRA or people-search integration.",
+        "description": "CNIC searches do not call this connector. Format validation only. Setting AUTHORIZED_IDENTITY_PROVIDER_URL or AUTHORIZED_IDENTITY_PROVIDER_TOKEN does not send a CNIC to a provider. NADRA is not queried.",
     },
     {
         "id": "stripe",
