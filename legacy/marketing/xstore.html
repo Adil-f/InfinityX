@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X Store - InfinityX</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Navigation (same as homepage) -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <span class="logo-svg-glow">
+                    <svg width="60" height="60" viewBox="0 0 300 300" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="InfinityX Logo">
+                        <g>
+                            <path d="M 60 150 Q 90 50, 150 150 Q 210 250, 240 150" stroke="white" stroke-width="28" fill="none"/>
+                            <path d="M 240 150 Q 210 50, 150 150 Q 90 250, 60 150" stroke="white" stroke-width="28" fill="none"/>
+                            <polygon points="60,150 20,80 90,110" fill="white"/>
+                            <polygon points="240,150 280,80 210,110" fill="white"/>
+                        </g>
+                    </svg>
+                </span>
+                <span class="logo-text" data-text="InfinityX">Infinity<span class="logo-x">X</span></span>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item"><a href="index.html" class="nav-link">Home</a></li>
+                <li class="nav-item"><a href="#store" class="nav-link active">X Store</a></li>
+                <li class="nav-item"><a href="#products" class="nav-link">Products</a></li>
+                <li class="nav-item"><a href="#cart" class="nav-link">Cart</a></li>
+                <li class="nav-item"><a href="#contact" class="nav-link">Contact</a></li>
+            </ul>
+            <button class="hamburger" aria-label="Toggle navigation menu" aria-expanded="false">
+                <span class="bar"></span>
+                <span class="bar"></span>
+                <span class="bar"></span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section id="store" class="hero">
+        <div class="hero-container">
+            <div class="hero-content">
+                <h1 class="hero-title interactive-title" data-text="X Store">
+                    <span class="gradient-text">X Store</span>
+                </h1>
+                <h2 class="hero-name interactive-name" data-text="by InfinityX">
+                    <span class="gradient-text">by InfinityX</span>
+                </h2>
+                <div class="hero-buttons">
+                    <button class="btn btn-primary" aria-label="Shop now">Shop Now</button>
+                    <button class="btn btn-secondary" aria-label="View products">View Products</button>
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="floating-elements">
+                    <div class="floating-element" data-speed="2"></div>
+                    <div class="floating-element" data-speed="1.5"></div>
+                    <div class="floating-element" data-speed="3"></div>
+                </div>
+            </div>
+        </div>
+        <div class="scroll-indicator">
+            <div class="scroll-arrow"></div>
+        </div>
+        <div class="particles-bg"></div>
+    </section>
+
+    <!-- Product Filters -->
+    <section class="store-filters">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title" data-text="Shop by Category">Shop by Category</h2>
+            </div>
+            <div class="portfolio-filters" role="tablist" aria-label="Product filters">
+                <button class="filter-btn active" data-filter="all" role="tab" aria-selected="true" aria-label="Show all products">All</button>
+                <button class="filter-btn" data-filter="tech" role="tab" aria-selected="false" aria-label="Show tech products">Tech</button>
+                <button class="filter-btn" data-filter="fashion" role="tab" aria-selected="false" aria-label="Show fashion products">Fashion</button>
+                <button class="filter-btn" data-filter="lifestyle" role="tab" aria-selected="false" aria-label="Show lifestyle products">Lifestyle</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Product Grid -->
+    <section id="products" class="store-products">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title" data-text="Featured Products">Featured Products</h2>
+            </div>
+            <div class="portfolio-grid" role="list" aria-label="Product list">
+                <!-- Example Product Card -->
+                <div class="portfolio-item product-card" data-category="tech" role="listitem">
+                    <div class="portfolio-image">
+                        <img src="https://via.placeholder.com/400x300/222222/ffffff?text=Smart+Device" alt="Smart Device">
+                    </div>
+                    <div class="portfolio-overlay">
+                        <h3>Smart Device</h3>
+                        <p>Next-gen smart device with AI integration.</p>
+                        <button class="btn btn-primary add-to-cart" aria-label="Add Smart Device to cart">Add to Cart</button>
+                    </div>
+                </div>
+                <div class="portfolio-item product-card" data-category="fashion" role="listitem">
+                    <div class="portfolio-image">
+                        <img src="https://via.placeholder.com/400x300/333333/ffffff?text=Futuristic+Jacket" alt="Futuristic Jacket">
+                    </div>
+                    <div class="portfolio-overlay">
+                        <h3>Futuristic Jacket</h3>
+                        <p>Stylish, tech-infused jacket for all seasons.</p>
+                        <button class="btn btn-primary add-to-cart" aria-label="Add Futuristic Jacket to cart">Add to Cart</button>
+                    </div>
+                </div>
+                <div class="portfolio-item product-card" data-category="lifestyle" role="listitem">
+                    <div class="portfolio-image">
+                        <img src="https://via.placeholder.com/400x300/444444/ffffff?text=Smart+Lamp" alt="Smart Lamp">
+                    </div>
+                    <div class="portfolio-overlay">
+                        <h3>Smart Lamp</h3>
+                        <p>Ambient lighting with voice control and automation.</p>
+                        <button class="btn btn-primary add-to-cart" aria-label="Add Smart Lamp to cart">Add to Cart</button>
+                    </div>
+                </div>
+                <!-- Add more product cards as needed -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Cart Section -->
+    <section id="cart" class="store-cart">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title" data-text="Your Cart">Your Cart</h2>
+            </div>
+            <div class="cart-content" aria-live="polite">
+                <p class="cart-empty">Your cart is empty. Start shopping!</p>
+                <ul class="cart-items" role="list"></ul>
+                <div class="cart-summary">
+                    <span class="cart-total-label">Total:</span>
+                    <span class="cart-total-amount">€0.00</span>
+                    <button class="btn btn-primary checkout-btn" disabled aria-label="Checkout">Checkout</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Contact Section -->
+    <section id="contact" class="contact">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title" data-text="Contact Us">Contact Us</h2>
+            </div>
+            <div class="contact-content">
+                <div class="contact-info">
+                    <div class="contact-item">
+                        <span class="contact-icon"><i class="fas fa-envelope"></i></span>
+                        <div class="contact-details">
+                            <h3>Email</h3>
+                            <p>adilfayyaz2007@gmail.com</p>
+                        </div>
+                    </div>
+                    <div class="contact-item">
+                        <span class="contact-icon"><i class="fas fa-map-marker-alt"></i></span>
+                        <div class="contact-details">
+                            <h3>Location</h3>
+                            <p>Bologna, Italy, 40139</p>
+                        </div>
+                    </div>
+                </div>
+                <form class="contact-form" autocomplete="off" aria-label="Contact form">
+                    <div class="form-group">
+                        <label for="name">Name</label>
+                        <input type="text" id="name" name="name" required aria-required="true">
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" name="email" required aria-required="true">
+                    </div>
+                    <div class="form-group">
+                        <label for="message">Message</label>
+                        <textarea id="message" name="message" rows="4" required aria-required="true"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary" aria-label="Send message">Send Message</button>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h3>X Store by InfinityX</h3>
+                <p>Modern e-commerce experience with advanced UI/UX and accessibility.</p>
+            </div>
+            <div class="footer-section">
+                <h3>Contact</h3>
+                <ul class="footer-links">
+                    <li><a href="mailto:adilfayyaz2007@gmail.com">Email</a></li>
+                    <li><a href="#">Location: Bologna, Italy</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 X Store by InfinityX. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+    <script>
+    // Store page interactivity: filter, cart, accessibility
+    document.addEventListener('DOMContentLoaded', function() {
+        // Product filter
+        const filterBtns = document.querySelectorAll('.filter-btn');
+        const productCards = document.querySelectorAll('.product-card');
+        filterBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                filterBtns.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                const filter = this.getAttribute('data-filter');
+                productCards.forEach(card => {
+                    if (filter === 'all' || card.getAttribute('data-category') === filter) {
+                        card.style.display = '';
+                    } else {
+                        card.style.display = 'none';
+                    }
+                });
+            });
+        });
+        // Cart logic
+        const cartItems = document.querySelector('.cart-items');
+        const cartTotal = document.querySelector('.cart-total-amount');
+        const cartEmpty = document.querySelector('.cart-empty');
+        const checkoutBtn = document.querySelector('.checkout-btn');
+        let cart = [];
+        document.querySelectorAll('.add-to-cart').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const card = this.closest('.product-card');
+                const name = card.querySelector('h3').textContent;
+                const price = 99.99; // Placeholder price
+                cart.push({ name, price });
+                renderCart();
+            });
+        });
+        function renderCart() {
+            cartItems.innerHTML = '';
+            if (cart.length === 0) {
+                cartEmpty.style.display = '';
+                checkoutBtn.disabled = true;
+                cartTotal.textContent = '€0.00';
+                return;
+            }
+            cartEmpty.style.display = 'none';
+            checkoutBtn.disabled = false;
+            let total = 0;
+            cart.forEach((item, i) => {
+                const li = document.createElement('li');
+                li.textContent = item.name + ' - €' + item.price.toFixed(2);
+                li.setAttribute('role', 'listitem');
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'btn btn-secondary';
+                removeBtn.textContent = 'Remove';
+                removeBtn.setAttribute('aria-label', 'Remove ' + item.name + ' from cart');
+                removeBtn.addEventListener('click', function() {
+                    cart.splice(i, 1);
+                    renderCart();
+                });
+                li.appendChild(removeBtn);
+                cartItems.appendChild(li);
+                total += item.price;
+            });
+            cartTotal.textContent = '€' + total.toFixed(2);
+        }
+        // Accessibility: keyboard navigation for filters
+        let filterIndex = 0;
+        filterBtns.forEach((btn, i) => {
+            btn.addEventListener('keydown', function(e) {
+                if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    filterBtns[(i + 1) % filterBtns.length].focus();
+                } else if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    filterBtns[(i - 1 + filterBtns.length) % filterBtns.length].focus();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html> 
