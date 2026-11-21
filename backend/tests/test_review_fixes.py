@@ -567,6 +567,22 @@ def test_invoice_events_follow_the_stored_subscription(client):
         assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "pro"
         assert client.get("/api/v1/billing", headers=_auth(other_token)).json()["plan"] == "enterprise"
 
+        assert client.post("/api/v1/billing/plan", headers=_auth(token), json={"plan": "free"}).status_code == 200
+        open_fail = _stripe_post(client, _stripe_event(f"evt_open_fail_{suffix}", "invoice.payment_failed", {
+            "id": f"in_open_{suffix}",
+            "subscription": subscription,
+            "metadata": {"org_id": org_id, "plan": "pro"},
+        }))
+        assert open_fail.json()["ignored"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "free"
+        open_paid = _stripe_post(client, _stripe_event(f"evt_open_paid_{suffix}", "invoice.paid", {
+            "id": f"in_open_{suffix}",
+            "subscription": subscription,
+            "metadata": {"org_id": org_id, "plan": "pro"},
+        }))
+        assert open_paid.json()["granted"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "pro"
+
         failed = _stripe_post(client, _stripe_event(f"evt_lapsed_{suffix}", "invoice.payment_failed", {
             "id": f"in_lapsed_{suffix}",
             "subscription": subscription,
@@ -577,9 +593,25 @@ def test_invoice_events_follow_the_stored_subscription(client):
         assert client.get("/api/v1/billing", headers=_auth(other_token)).json()["plan"] == "enterprise"
         retry = _stripe_post(client, _stripe_event(f"evt_lapsed_retry_{suffix}", "invoice.payment_failed", {"id": f"in_lapsed_{suffix}", "subscription": subscription}))
         assert retry.json()["duplicate"] is True
-        client.post("/api/v1/billing/plan", headers=_auth(token), json={"plan": "pro"})
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "free"
+        recovered = _stripe_post(client, _stripe_event(f"evt_lapsed_paid_{suffix}", "invoice.paid", {
+            "id": f"in_lapsed_{suffix}",
+            "customer": customer,
+            "subscription": subscription,
+            "metadata": {"org_id": org_id, "plan": "pro"},
+        }))
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["granted"] is True
+        assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "pro"
+        repeat_paid = _stripe_post(client, _stripe_event(f"evt_lapsed_paid_2_{suffix}", "invoice.paid", {
+            "id": f"in_lapsed_{suffix}",
+            "subscription": subscription,
+            "metadata": {"org_id": org_id, "plan": "pro"},
+        }))
+        assert repeat_paid.json()["duplicate"] is True
         assert _stripe_post(client, _stripe_event(f"evt_lapsed_late_{suffix}", "invoice.payment_failed", {"id": f"in_lapsed_{suffix}", "subscription": subscription})).json()["duplicate"] is True
         assert client.get("/api/v1/billing", headers=_auth(token)).json()["plan"] == "pro"
+        assert client.get("/api/v1/billing", headers=_auth(other_token)).json()["plan"] == "enterprise"
     finally:
         stripe.Webhook.construct_event = original
         settings.stripe_webhook_secret = None
@@ -811,10 +843,27 @@ def test_invite_password_is_one_time_and_rejects_the_published_example(client):
     assert temporary not in listed
     assert temporary not in audit
 
+    from datetime import datetime, timedelta, timezone
+
+    db = SessionLocal()
+    try:
+        invited_user = db.query(User).filter(User.email == email).one()
+        invited_user.failed_logins = 4
+        invited_user.locked_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+    finally:
+        db.close()
     pending = client.post("/api/v1/auth/login", json={"email": email, "password": temporary})
     assert pending.status_code == 200, pending.text
     assert pending.json()["password_change_required"] is True
     assert "access_token" not in pending.json()
+    db = SessionLocal()
+    try:
+        invited_user = db.query(User).filter(User.email == email).one()
+        assert invited_user.failed_logins == 0
+        assert invited_user.locked_until is None
+    finally:
+        db.close()
     change_token = pending.json()["password_change_token"]
     assert client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {change_token}"}).status_code == 401
     blocked = client.post(

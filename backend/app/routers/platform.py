@@ -675,8 +675,6 @@ def apply_stripe_event(db: Session, event: dict) -> dict:
         plan = _paid_plan(subject, org, via)
         if org is None or plan is None:
             return {"received": True, "ignored": True}
-        if db.query(CreditLedger).filter(CreditLedger.org_id == org.id, CreditLedger.reason == f"{key}:failed").one_or_none():
-            return {"received": True, "ignored": True}
         if db.query(CreditLedger).filter(CreditLedger.org_id == org.id, CreditLedger.reason == key).one_or_none():
             return {"received": True, "duplicate": True}
         org.plan = plan

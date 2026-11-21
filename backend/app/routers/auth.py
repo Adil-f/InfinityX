@@ -159,6 +159,8 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
         db.commit()
         raise invalid
     if user.must_change_password:
+        user.failed_logins = 0
+        user.locked_until = None
         token = make_token(user_id=user.id, org_id=user.org_id, role=user.role, minutes=15, typ="password_change")
         db.add(AuditLog(org_id=user.org_id, user_id=user.id, action="auth.login", resource_type="user", resource_id=str(user.id), ip=ip, details={"password_change_required": True}))
         db.commit()
