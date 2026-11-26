@@ -20,20 +20,25 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env with Meta credentials + TOKEN_ENCRYPTION_KEY
+# Edit .env with Meta credentials, TOKEN_ENCRYPTION_KEY, and APP_API_TOKEN
 uvicorn app.main:app --reload --port 8000
 ```
 
-Generate an encryption key:
+Generate keys:
 
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
+
+`APP_API_TOKEN` protects `GET`/`DELETE /api/instagram/connection` (`Authorization: Bearer …`). OAuth start/callback stay public (Meta `state` CSRF). CORS allows only `CORS_ALLOW_ORIGINS` — never `*` with credentials.
 
 ### 2. Frontend
 
 ```bash
 cd frontend
+cp .env.example .env
+# Set VITE_APP_API_TOKEN to the same value as backend APP_API_TOKEN
 npm install
 npm run dev
 ```
@@ -66,8 +71,8 @@ Publishing (`instagram_business_content_publish`) and messaging (`instagram_busi
 | `GET /api/health` | Liveness + whether Meta env is configured |
 | `GET /api/oauth/instagram/start` | Begin OAuth (redirect or `?format=json`) |
 | `GET /api/oauth/instagram/callback` | OAuth callback → encrypt & store tokens |
-| `GET /api/instagram/connection` | `{ connected }` from real tokens only |
-| `DELETE /api/instagram/connection` | Clear stored connection |
+| `GET /api/instagram/connection` | `{ connected }` from real tokens only (**requires `APP_API_TOKEN`**) |
+| `DELETE /api/instagram/connection` | Clear stored connection (**requires `APP_API_TOKEN`**) |
 
 ## Tests
 

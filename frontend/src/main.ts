@@ -22,12 +22,28 @@ if (!app) {
   throw new Error("#app missing");
 }
 
+/** Local APP_API_TOKEN — same value as backend env. Not a Meta Instagram token. */
+const APP_API_TOKEN = (import.meta.env.VITE_APP_API_TOKEN as string | undefined)?.trim() ?? "";
+
+function authHeaders(): HeadersInit {
+  if (!APP_API_TOKEN) {
+    return {};
+  }
+  return { Authorization: `Bearer ${APP_API_TOKEN}` };
+}
+
 function qsFlag(name: string): string | null {
   return new URLSearchParams(window.location.search).get(name);
 }
 
 async function fetchConnection(): Promise<ConnectionStatus> {
-  const res = await fetch("/api/instagram/connection");
+  if (!APP_API_TOKEN) {
+    throw new Error("Set VITE_APP_API_TOKEN to match backend APP_API_TOKEN.");
+  }
+  const res = await fetch("/api/instagram/connection", { headers: authHeaders() });
+  if (res.status === 401) {
+    throw new Error("Unauthorized — APP_API_TOKEN / VITE_APP_API_TOKEN mismatch.");
+  }
   if (!res.ok) {
     throw new Error(`Status request failed (${res.status})`);
   }
@@ -90,7 +106,17 @@ function render(status: ConnectionStatus, flash: { kind: "ok" | "err"; text: str
 
   const disconnect = document.querySelector<HTMLButtonElement>("#disconnect");
   disconnect?.addEventListener("click", async () => {
-    await fetch("/api/instagram/connection", { method: "DELETE" });
+    const res = await fetch("/api/instagram/connection", {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      render(status, {
+        kind: "err",
+        text: res.status === 401 ? "Unauthorized disconnect." : `Disconnect failed (${res.status})`,
+      });
+      return;
+    }
     window.history.replaceState({}, "", "/");
     const next = await fetchConnection();
     render(next, { kind: "ok", text: "Connection cleared." });

@@ -152,13 +152,28 @@ No tables for fabricated engagement. Insights tables appear only when real Graph
 
 ## 7. API surface (Phase 1)
 
-| Method | Path | Behavior |
-| --- | --- | --- |
-| `GET` | `/api/health` | Liveness |
-| `GET` | `/api/oauth/instagram/start` | Create `state`, redirect to Meta authorize URL (or JSON URL if `?format=json`) |
-| `GET` | `/api/oauth/instagram/callback` | Exchange code → long-lived token → encrypt → store; redirect to UI status |
-| `GET` | `/api/instagram/connection` | `{ connected, account?, error? }` from DB only; no invented stats |
-| `DELETE` | `/api/instagram/connection` | Soft-disconnect / clear tokens (optional Phase 1) |
+| Method | Path | Auth | Behavior |
+| --- | --- | --- | --- |
+| `GET` | `/api/health` | Public | Liveness |
+| `GET` | `/api/oauth/instagram/start` | Public | Create `state`, redirect to Meta authorize URL (or JSON URL if `?format=json`) |
+| `GET` | `/api/oauth/instagram/callback` | Public (Meta `state` CSRF) | Exchange code → long-lived token → encrypt → store; redirect to UI status |
+| `GET` | `/api/instagram/connection` | **`APP_API_TOKEN`** | `{ connected, account? }` from DB only; no invented stats |
+| `DELETE` | `/api/instagram/connection` | **`APP_API_TOKEN`** | Soft-disconnect / clear encrypted tokens |
+
+### Local API token (connection protection)
+
+Phase 1 is local-first: there is no multi-user login yet. Connection **read** and **disconnect** require a shared operator secret `APP_API_TOKEN` via:
+
+- `Authorization: Bearer <APP_API_TOKEN>`, or
+- `X-InfinityX-Token: <APP_API_TOKEN>`
+
+This is **not** a Meta Instagram User access token. The UI loads the same value from `VITE_APP_API_TOKEN`. Bearer/header auth (no session cookies) avoids classic cross-site cookie CSRF; CORS does not enable credentials.
+
+### CORS
+
+- Allowlist only: `CORS_ALLOW_ORIGINS` (plus origin derived from `FRONTEND_SUCCESS_URL`).
+- Never `allow_origins=["*"]` with credentials.
+- `Access-Control-Allow-Credentials` is not set; browsers send the API token in headers when the frontend holds it.
 
 Status payload example when **not** connected:
 
@@ -217,11 +232,14 @@ User intent (Cursor chat / UI)
 | `META_INSTAGRAM_APP_ID` | Instagram App ID (Business login settings) |
 | `META_INSTAGRAM_APP_SECRET` | Instagram App Secret |
 | `META_OAUTH_REDIRECT_URI` | Exact redirect URI registered in App Dashboard |
-| `TOKEN_ENCRYPTION_KEY` | Fernet key for token at rest |
+| `TOKEN_ENCRYPTION_KEY` | Fernet key for Instagram tokens at rest |
+| `APP_API_TOKEN` | Local operator secret for connection GET/DELETE |
+| `CORS_ALLOW_ORIGINS` | Comma-separated browser origins (no `*`) |
 | `DATABASE_URL` | SQLite path, e.g. `sqlite:///./data/infinityx.db` |
 | `APP_BASE_URL` | Backend public base URL |
 | `FRONTEND_SUCCESS_URL` | Where callback redirects after success |
 | `OAUTH_SCOPES` | Override default scope list (optional) |
+| `VITE_APP_API_TOKEN` | Frontend copy of `APP_API_TOKEN` |
 
 Live OAuth cannot complete until the user supplies App ID, App Secret, and a matching redirect URI in the Meta App Dashboard.
 

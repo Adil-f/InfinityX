@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
+from fastapi.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import __version__
 from app.config import get_settings
@@ -18,6 +19,40 @@ async def lifespan(_app: FastAPI):
     yield
 
 
+class DynamicCORSMiddleware(BaseHTTPMiddleware):
+    """CORS with an explicit origin allowlist from settings (never '*').
+
+    Credentials are not enabled: the UI authenticates with Authorization /
+    X-InfinityX-Token headers, not cookies.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        settings = get_settings()
+        allowed = set(settings.cors_origin_list)
+        origin = request.headers.get("origin")
+
+        if request.method == "OPTIONS" and origin:
+            if origin not in allowed:
+                return Response(status_code=403, content="CORS origin not allowed")
+            headers = {
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": (
+                    "Authorization, Content-Type, Accept, X-InfinityX-Token"
+                ),
+                "Access-Control-Max-Age": "600",
+                "Vary": "Origin",
+            }
+            return Response(status_code=204, headers=headers)
+
+        response = await call_next(request)
+        if origin and origin in allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            # Explicitly do not set Access-Control-Allow-Credentials
+        return response
+
+
 app = FastAPI(
     title="InfinityX",
     description=(
@@ -28,13 +63,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(DynamicCORSMiddleware)
 
 app.include_router(oauth.router)
 app.include_router(connection.router)

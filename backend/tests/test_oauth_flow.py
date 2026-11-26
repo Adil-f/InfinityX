@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from app.crypto import TokenEncryptor
@@ -24,8 +23,8 @@ def test_health(client: TestClient):
     assert body["meta_configured"] is True
 
 
-def test_connection_false_without_tokens(client: TestClient):
-    res = client.get("/api/instagram/connection")
+def test_connection_false_without_tokens(client: TestClient, auth_headers: dict[str, str]):
+    res = client.get("/api/instagram/connection", headers=auth_headers)
     assert res.status_code == 200
     body = res.json()
     assert body["connected"] is False
@@ -116,7 +115,9 @@ async def test_complete_oauth_stores_encrypted_token(client: TestClient, encrypt
         assert "instagram_business_basic" in (account.permissions or "")
 
 
-def test_callback_happy_path_mocked(client: TestClient, encryption_key: str):
+def test_callback_happy_path_mocked(
+    client: TestClient, encryption_key: str, auth_headers: dict[str, str]
+):
     # Create a valid state first
     start = client.get("/api/oauth/instagram/start?format=json")
     state = start.json()["state"]
@@ -155,7 +156,7 @@ def test_callback_happy_path_mocked(client: TestClient, encryption_key: str):
     assert res.status_code == 302
     assert "connected=true" in res.headers["location"]
 
-    status = client.get("/api/instagram/connection")
+    status = client.get("/api/instagram/connection", headers=auth_headers)
     assert status.status_code == 200
     body = status.json()
     assert body["connected"] is True
@@ -166,7 +167,7 @@ def test_callback_happy_path_mocked(client: TestClient, encryption_key: str):
     assert "live-token-value" not in status.text
 
 
-def test_disconnect(client: TestClient, encryption_key: str):
+def test_disconnect(client: TestClient, encryption_key: str, auth_headers: dict[str, str]):
     # Uses client fixture so schema exists on the shared engine
     engine = get_engine()
     SessionLocal = sessionmaker(bind=engine)
@@ -189,14 +190,14 @@ def test_disconnect(client: TestClient, encryption_key: str):
         )
         session.commit()
 
-    before = client.get("/api/instagram/connection").json()
+    before = client.get("/api/instagram/connection", headers=auth_headers).json()
     assert before["connected"] is True
 
-    deleted = client.delete("/api/instagram/connection")
+    deleted = client.delete("/api/instagram/connection", headers=auth_headers)
     assert deleted.status_code == 200
     assert deleted.json()["connected"] is False
 
-    after = client.get("/api/instagram/connection").json()
+    after = client.get("/api/instagram/connection", headers=auth_headers).json()
     assert after["connected"] is False
 
 
