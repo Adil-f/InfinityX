@@ -7,10 +7,24 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.config import Settings
 
 
+def is_valid_fernet_key(key: str | None) -> bool:
+    """Return True only if `key` is usable Fernet key material."""
+    if not key or not str(key).strip():
+        return False
+    try:
+        Fernet(str(key).strip().encode("utf-8"))
+    except Exception:
+        return False
+    return True
+
+
 class TokenEncryptor:
     def __init__(self, key: str) -> None:
-        if not key or not key.strip():
-            raise ValueError("TOKEN_ENCRYPTION_KEY is required")
+        if not is_valid_fernet_key(key):
+            raise ValueError(
+                "TOKEN_ENCRYPTION_KEY must be a valid Fernet key "
+                '(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")'
+            )
         self._fernet = Fernet(key.strip().encode("utf-8"))
 
     def encrypt(self, plaintext: str) -> str:

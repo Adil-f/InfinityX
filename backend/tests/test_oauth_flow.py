@@ -65,7 +65,9 @@ def test_callback_rejects_bad_state(client: TestClient):
         params={"code": "AQBx", "state": "not-a-real-state"},
         follow_redirects=False,
     )
-    assert res.status_code == 400
+    assert res.status_code == 302
+    assert "connected=false" in res.headers["location"]
+    assert "invalid_state" in res.headers["location"]
 
 
 @pytest.mark.asyncio

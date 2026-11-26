@@ -33,11 +33,14 @@ class Settings(BaseSettings):
 
     @property
     def meta_configured(self) -> bool:
+        # Import lazily to avoid circular imports at module load.
+        from app.crypto import is_valid_fernet_key
+
         return bool(
             self.meta_instagram_app_id.strip()
             and self.meta_instagram_app_secret.strip()
             and self.meta_oauth_redirect_uri.strip()
-            and self.token_encryption_key.strip()
+            and is_valid_fernet_key(self.token_encryption_key)
         )
 
     @property

@@ -18,6 +18,14 @@ def test_rejects_empty_key():
         TokenEncryptor("")
 
 
+def test_rejects_invalid_fernet_material():
+    from app.crypto import is_valid_fernet_key
+
+    assert is_valid_fernet_key("not-a-fernet-key") is False
+    with pytest.raises(ValueError):
+        TokenEncryptor("not-a-fernet-key")
+
+
 def test_rejects_empty_plaintext():
     key = Fernet.generate_key().decode()
     enc = TokenEncryptor(key)

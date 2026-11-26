@@ -144,8 +144,30 @@ async def complete_oauth(
         account.token.expires_at = expires_at
         account.token.obtained_at = now
 
+    # Phase 1 is single-active-grant: deactivate every other account and drop their tokens.
+    _deactivate_accounts_except(session, keep_account_id=account.id, now=now)
+
     session.flush()
     return account
+
+
+def _deactivate_accounts_except(
+    session: Session,
+    *,
+    keep_account_id: str,
+    now: datetime | None = None,
+) -> None:
+    stamp = now or datetime.now(timezone.utc)
+    others = session.scalars(
+        select(InstagramAccount).where(InstagramAccount.id != keep_account_id)
+    ).all()
+    for other in others:
+        if not other.is_active and other.token is None:
+            continue
+        other.is_active = False
+        # delete-orphan on relationship clears encrypted tokens for prior grants
+        other.token = None
+        other.updated_at = stamp
 
 
 def get_active_connection(session: Session) -> InstagramAccount | None:
@@ -157,13 +179,18 @@ def get_active_connection(session: Session) -> InstagramAccount | None:
 
 
 def disconnect_active(session: Session) -> bool:
-    account = get_active_connection(session)
-    if account is None:
+    """Deactivate all active grants and delete their encrypted tokens."""
+    accounts = list(
+        session.scalars(
+            select(InstagramAccount).where(InstagramAccount.is_active.is_(True))
+        ).all()
+    )
+    if not accounts:
         return False
-    account.is_active = False
-    if account.token is not None:
-        session.delete(account.token)
+    now = datetime.now(timezone.utc)
+    for account in accounts:
+        account.is_active = False
         account.token = None
-    account.updated_at = datetime.now(timezone.utc)
+        account.updated_at = now
     session.flush()
     return True

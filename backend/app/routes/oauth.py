@@ -3,11 +3,11 @@ from __future__ import annotations
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
-from app.crypto import TokenEncryptor, encryptor_from_settings
+from app.crypto import encryptor_from_settings
 from app.db import get_session
 from app.oauth_service import build_start_url, complete_oauth, consume_oauth_state
 from app.schemas import OAuthStartResponse
@@ -19,11 +19,16 @@ def _settings() -> Settings:
     return get_settings()
 
 
-def _encryptor(settings: Settings = Depends(_settings)) -> TokenEncryptor:
-    try:
-        return encryptor_from_settings(settings)
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+def _frontend_failure_redirect(settings: Settings, *, error: str, description: str) -> RedirectResponse:
+    frontend = settings.frontend_success_url.rstrip("/") + "/"
+    qs = urlencode(
+        {
+            "connected": "false",
+            "error": error,
+            "error_description": description,
+        }
+    )
+    return RedirectResponse(url=f"{frontend}?{qs}", status_code=302)
 
 
 @router.get("/start")
@@ -38,10 +43,13 @@ async def oauth_start(
             status_code=503,
             detail=(
                 "Meta Instagram OAuth is not configured. Set META_INSTAGRAM_APP_ID, "
-                "META_INSTAGRAM_APP_SECRET, META_OAUTH_REDIRECT_URI, and TOKEN_ENCRYPTION_KEY."
+                "META_INSTAGRAM_APP_SECRET, META_OAUTH_REDIRECT_URI, and a valid "
+                "Fernet TOKEN_ENCRYPTION_KEY."
             ),
         )
     try:
+        # Fail closed before sending the user to Meta if encryption is unusable.
+        encryptor_from_settings(settings)
         authorize_url = build_start_url(session, settings)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -50,7 +58,6 @@ async def oauth_start(
         request.headers.get("accept") or ""
     )
     if wants_json:
-        # state is embedded in the authorize URL; extract for clients that need it
         state = None
         if "state=" in authorize_url:
             state = authorize_url.split("state=", 1)[1].split("&", 1)[0]
@@ -67,7 +74,6 @@ async def oauth_callback(
     error_description: str | None = None,
     session: Session = Depends(get_session),
     settings: Settings = Depends(_settings),
-    encryptor: TokenEncryptor = Depends(_encryptor),
 ):
     frontend = settings.frontend_success_url.rstrip("/") + "/"
 
@@ -83,13 +89,34 @@ async def oauth_callback(
         return RedirectResponse(url=f"{frontend}?{qs}", status_code=302)
 
     if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
+        return _frontend_failure_redirect(
+            settings,
+            error="missing_code",
+            description="Missing authorization code",
+        )
 
     if not consume_oauth_state(session, state):
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+        return _frontend_failure_redirect(
+            settings,
+            error="invalid_state",
+            description="Invalid or expired OAuth state",
+        )
+
+    try:
+        encryptor = encryptor_from_settings(settings)
+    except ValueError as exc:
+        return _frontend_failure_redirect(
+            settings,
+            error="encryption_misconfigured",
+            description=str(exc),
+        )
 
     if not settings.meta_configured:
-        raise HTTPException(status_code=503, detail="Meta Instagram OAuth is not configured")
+        return _frontend_failure_redirect(
+            settings,
+            error="not_configured",
+            description="Meta Instagram OAuth is not configured",
+        )
 
     try:
         account = await complete_oauth(
@@ -99,8 +126,11 @@ async def oauth_callback(
             code=code,
         )
     except Exception as exc:
-        qs = urlencode({"connected": "false", "error": "oauth_failed", "error_description": str(exc)})
-        return RedirectResponse(url=f"{frontend}?{qs}", status_code=302)
+        return _frontend_failure_redirect(
+            settings,
+            error="oauth_failed",
+            description=str(exc),
+        )
 
     qs = urlencode(
         {
