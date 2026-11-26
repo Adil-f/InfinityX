@@ -95,13 +95,8 @@ async def oauth_callback(
             description="Missing authorization code",
         )
 
-    if not consume_oauth_state(session, state):
-        return _frontend_failure_redirect(
-            settings,
-            error="invalid_state",
-            description="Invalid or expired OAuth state",
-        )
-
+    # Validate local config/encryption BEFORE consuming OAuth state so a misconfigured
+    # server does not burn Meta's one-time `code` (redirect commits would persist consume).
     try:
         encryptor = encryptor_from_settings(settings)
     except ValueError as exc:
@@ -116,6 +111,13 @@ async def oauth_callback(
             settings,
             error="not_configured",
             description="Meta Instagram OAuth is not configured",
+        )
+
+    if not consume_oauth_state(session, state):
+        return _frontend_failure_redirect(
+            settings,
+            error="invalid_state",
+            description="Invalid or expired OAuth state",
         )
 
     try:
