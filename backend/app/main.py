@@ -31,9 +31,16 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
         allowed = set(settings.cors_origin_list)
         origin = request.headers.get("origin")
 
+        # Browser cross-origin requests include Origin. Reject unknown origins for
+        # both preflight and actual requests (same-origin / no Origin still allowed).
+        if origin and origin not in allowed:
+            return Response(
+                status_code=403,
+                content="CORS origin not allowed",
+                headers={"Vary": "Origin"},
+            )
+
         if request.method == "OPTIONS" and origin:
-            if origin not in allowed:
-                return Response(status_code=403, content="CORS origin not allowed")
             headers = {
                 "Access-Control-Allow-Origin": origin,
                 "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",

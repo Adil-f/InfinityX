@@ -72,11 +72,11 @@
 3. Meta redirects to `GET /api/oauth/instagram/callback?code=…&state=…` (strip trailing `#_` from `code`).
 4. Backend validates `state`, then `POST https://api.instagram.com/oauth/access_token` → short-lived Instagram User access token + `user_id` + granted permissions.
 5. Backend `GET https://graph.instagram.com/access_token?grant_type=ig_exchange_token&…` → long-lived token (~60 days).
-6. Backend optionally `GET https://graph.instagram.com/me?fields=id,user_id,username,name,account_type` to store profile fields.
-7. Encrypt token → SQLite. Connection status becomes `connected` **only** after this succeeds.
+6. Backend **must** `GET https://graph.instagram.com/me?fields=id,user_id,username,name,account_type`. If `/me` fails, **do not** store or activate the long-lived token.
+7. Encrypt token → SQLite only after `/me` succeeds. Connection status becomes `connected` **only** after this succeeds.
 8. Later: refresh via `https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&…` before expiry.
 
-**Hard rule:** Until step 7 completes successfully, the API must report `connected: false`. No placeholders.
+**Hard rule:** Until step 7 completes successfully, the API must report `connected: false`. No placeholders. A failed profile fetch leaves no grant.
 
 ---
 
@@ -172,7 +172,8 @@ This is **not** a Meta Instagram User access token. The UI loads the same value 
 ### CORS
 
 - Allowlist only: `CORS_ALLOW_ORIGINS` (plus origin derived from `FRONTEND_SUCCESS_URL`).
-- Never `allow_origins=["*"]` with credentials.
+- Never `allow_origins=["*"]` with credentials; `*` entries are dropped.
+- Browser requests with a non-allowlisted `Origin` are rejected with HTTP 403 (preflight and non-preflight).
 - `Access-Control-Allow-Credentials` is not set; browsers send the API token in headers when the frontend holds it.
 
 Status payload example when **not** connected:

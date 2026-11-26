@@ -14,6 +14,7 @@ from app.meta_client import (
     InstagramProfile,
     LongLivedToken,
     MetaInstagramClient,
+    MetaInstagramError,
     ShortLivedToken,
     build_authorize_url,
 )
@@ -82,25 +83,19 @@ async def complete_oauth(
             await meta.__aenter__()
         short: ShortLivedToken = await meta.exchange_code(code)
         long: LongLivedToken = await meta.exchange_long_lived(short.access_token)
-        profile: InstagramProfile | None = None
-        try:
-            profile = await meta.get_profile(long.access_token)
-        except Exception:
-            # Profile enrichment is best-effort; connection is valid with token + user_id.
-            profile = None
+        # /me must succeed before any grant is stored or activated.
+        profile: InstagramProfile = await meta.get_profile(long.access_token)
     finally:
         if owns_client:
             await meta.__aexit__(None, None, None)
 
+    if not profile.user_id and not short.user_id:
+        raise MetaInstagramError("Instagram profile response missing user identity")
+
     permissions = short.permissions or settings.scope_list
     permissions_str = ",".join(permissions)
-    username = profile.username if profile else None
-    name = profile.name if profile else None
-    account_type = profile.account_type if profile else None
     # Prefer Graph user_id when present; fall back to token-exchange user_id
-    ig_user_id = short.user_id
-    if profile and profile.user_id:
-        ig_user_id = profile.user_id
+    ig_user_id = profile.user_id or short.user_id
 
     account = session.scalar(
         select(InstagramAccount).where(InstagramAccount.ig_user_id == ig_user_id)
@@ -109,9 +104,9 @@ async def complete_oauth(
     if account is None:
         account = InstagramAccount(
             ig_user_id=ig_user_id,
-            username=username,
-            name=name,
-            account_type=account_type,
+            username=profile.username,
+            name=profile.name,
+            account_type=profile.account_type,
             permissions=permissions_str,
             is_active=True,
             connected_at=now,
@@ -120,9 +115,9 @@ async def complete_oauth(
         session.add(account)
         session.flush()
     else:
-        account.username = username or account.username
-        account.name = name or account.name
-        account.account_type = account_type or account.account_type
+        account.username = profile.username or account.username
+        account.name = profile.name or account.name
+        account.account_type = profile.account_type or account.account_type
         account.permissions = permissions_str
         account.is_active = True
         account.updated_at = now
